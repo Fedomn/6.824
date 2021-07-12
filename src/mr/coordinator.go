@@ -6,6 +6,8 @@ import "os"
 import "net/rpc"
 import "net/http"
 
+const intermediateFileFormat = "mr-%s-%s"
+
 type workerTask struct {
 	filePath                 string
 	workerNumber             int
@@ -19,16 +21,16 @@ type Coordinator struct {
 	nReduce int // reduce worker count
 }
 
-// Your code here -- RPC handlers for the worker to call.
+func (c *Coordinator) AskTask() {
 
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
+}
+
+func (c *Coordinator) AskMapTask(args AskMapTaskArgs, reply *AskMapTaskReply) {
+
+}
+
+func (c *Coordinator) DoneMapTask(args DoneMapTaskArgs, reply *DoneMapTaskReply) {
+
 }
 
 //

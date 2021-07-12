@@ -1,29 +1,48 @@
 package mr
 
-//
-// RPC definitions.
-//
-// remember to capitalize all names.
-//
-
-import "os"
+import (
+	"errors"
+	"os"
+	"time"
+)
 import "strconv"
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
+const Timeout = time.Second * 10
+const AskTaskInterval = time.Second
 
-type ExampleArgs struct {
-	X int
+const RpcAskTask = "Coordinator.AskTask"
+
+// task types
+const (
+	mapTask = iota
+	reduceTask
+)
+
+// worker states
+const (
+	idleWorker = iota
+	workingWorker
+	lostWorker
+)
+
+// AskTaskArgs also as a heartbeat request
+type AskTaskArgs struct {
+	id string // ask worker identifier
 }
 
-type ExampleReply struct {
-	Y int
+type AskTaskReply struct {
+	// for normal flow
+	taskType                 int      // task type
+	inputFile                string   // for map task input
+	intermediateFilePathList []string // for map task outputs or reduce task inputs
+
+	err error // for errors that includes heartbeat error
 }
 
-// Add your RPC definitions here.
-
+var (
+	ErrTaskNotReady     = errors.New("task not ready, please retry")
+	ErrConflictWorkerId = errors.New("conflict worker identifier")
+)
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
