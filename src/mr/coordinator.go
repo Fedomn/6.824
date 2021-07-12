@@ -6,10 +6,17 @@ import "os"
 import "net/rpc"
 import "net/http"
 
+type workerTask struct {
+	filePath                 string
+	workerNumber             int
+	intermediateFilePathList []string
+}
 
 type Coordinator struct {
-	// Your definitions here.
+	filePathList []string // input files
 
+	nMap    int // map worker count
+	nReduce int // reduce worker count
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -23,7 +30,6 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
 }
-
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -50,7 +56,6 @@ func (c *Coordinator) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -60,10 +65,13 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	c := Coordinator{
+		filePathList: files,
+		nMap:         nReduce,
+		nReduce:      nReduce,
+	}
 
 	// Your code here.
-
 
 	c.server()
 	return &c

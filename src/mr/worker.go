@@ -5,6 +5,23 @@ import "log"
 import "net/rpc"
 import "hash/fnv"
 
+// worker types
+const (
+	mapTask = iota
+	reduceTask
+)
+
+// worker states
+const (
+	idle = iota
+	working
+	lost
+)
+
+type Worker struct {
+	taskType int
+	state    int
+}
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,11 +41,10 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
-func Worker(mapf func(string, string) []KeyValue,
+func NewWorker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
