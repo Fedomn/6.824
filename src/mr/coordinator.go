@@ -1,36 +1,51 @@
 package mr
 
-import "log"
+import (
+	"log"
+	"sync"
+)
 import "net"
 import "os"
 import "net/rpc"
 import "net/http"
 
-const intermediateFileFormat = "mr-%s-%s"
-
-type workerTask struct {
-	filePath                 string
-	workerNumber             int
-	intermediateFilePathList []string
+type worker struct {
+	id     string
+	status int
 }
 
 type Coordinator struct {
 	filePathList []string // input files
 
+	assignTaskLock sync.Mutex
+	mapTasks       []string
+	reduceTasks    []string
+
 	nMap    int // map worker count
 	nReduce int // reduce worker count
 }
 
-func (c *Coordinator) AskTask() {
+func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
+	c.assignTaskLock.Lock()
+	defer c.assignTaskLock.Unlock()
+
+	reply.NReduce = 2
+	reply.TaskType = mapTask
+	reply.InputFile = c.filePathList[0]
+
+	return nil
+}
+
+func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) {
 
 }
 
-func (c *Coordinator) AskMapTask(args AskMapTaskArgs, reply *AskMapTaskReply) {
-
+func (c *Coordinator) popMapTask() string {
+	return ""
 }
 
-func (c *Coordinator) DoneMapTask(args DoneMapTaskArgs, reply *DoneMapTaskReply) {
-
+func (c *Coordinator) pushMapTask() string {
+	return ""
 }
 
 //

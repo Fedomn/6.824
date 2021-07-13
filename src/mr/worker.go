@@ -37,42 +37,52 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 //
 func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	w := &Worker{
-		id: newId(),
-	}
-
-	ticker := time.NewTicker(Timeout)
-	defer ticker.Stop()
+	w := newWorker()
 
 	for {
 
-		if err := w.askTask(); err != nil {
-			w.retryCount++
-			if w.retryCount >= AskTaskMaxCount {
-				log.Printf("Worker:[%v] Retry times had exceed max, will stop worker", w)
-				return
+		// main logic
+		var err error
+		for i := true; i; i = false {
+			if err = w.askTask(); err != nil {
+				break
 			}
-			log.Printf("Worker:[%v] will retry after %s", w, AskTaskInterval.String())
-			time.Sleep(AskTaskInterval)
+
+			if w.taskType == mapTask {
+				if err = w.handleMapTask(mapf); err != nil {
+					break
+				}
+				if err = w.replyMapTask(err); err != nil {
+					break
+				}
+			} else if w.taskType == reduceTask {
+			} else {
+				log.Printf("Worker:[%s] receive unrecognized taskType", w)
+			}
+
+			// replied task and reset worker
+			log.Printf("Worker:[%s] task already done, will aks new task", w)
+			w.reset()
+		}
+		if err == nil {
 			continue
 		}
 
-		if w.taskType == mapTask {
-			w.handleMapTask(mapf)
-		} else if w.taskType == reduceTask {
-
-		} else {
-			log.Printf("Worker:[%v] receive unrecognized taskType", w)
+		// handle error cases
+		if w.retryCount >= TaskMaxRetryCount {
+			log.Printf("Worker:[%s] Retry times had exceed max, will stop worker", w)
+			return
 		}
-
+		log.Printf("Worker:[%s] will retry after %s", w, TaskRetryInterval.String())
+		time.Sleep(TaskRetryInterval)
+		w.retryCount++
 	}
-
 }
 
 type Worker struct {
 	id       string
 	taskType int
-	state    int
+	status   int
 	nReduce  int
 
 	inputFile                string   // for map task input
@@ -85,45 +95,61 @@ type Worker struct {
 	tmpFileMap map[int]*os.File // for intermediate temp file before os.rename
 }
 
+func (w *Worker) String() string {
+	return fmt.Sprintf("id:%s taskType:%d status:%d retryCount:%d", w.id, w.taskType, w.status, w.retryCount)
+}
+
 func (w *Worker) askTask() error {
-	args := AskTaskArgs{id: w.id}
+	// already assigned task
+	if w.status >= assignedWorker {
+		return nil
+	}
+
+	args := AskTaskArgs{Id: w.id}
 	reply := AskTaskReply{}
 
 	// send the RPC request, wait for the reply.
 	if err := w.call(RpcAskTask, &args, &reply); err != nil {
-		log.Printf("Worker:[%v] encounter err:[%v]", w, err)
+		log.Printf("Worker:[%s] askTask err:[%v]", w, err)
 		return err
 	}
 
-	if err := reply.err; err != nil {
-		log.Printf("Worker:[%v] encounter err:[%v]", w, err)
+	if err := reply.Err; err != nil {
+		log.Printf("Worker:[%s] askTask err:[%v]", w, err)
 		if errors.Is(err, ErrConflictWorkerId) {
 			w.id = newId()
 		}
 		return err
 	}
 
-	w.nReduce = reply.nReduce
-	w.taskType = reply.taskType
-	w.inputFile = reply.inputFile
-	w.intermediateFilePathList = reply.intermediateFilePathList
+	w.nReduce = reply.NReduce
+	w.taskType = reply.TaskType
+	w.inputFile = reply.InputFile
+	w.intermediateFilePathList = reply.IntermediateFilePathList
 
+	w.status = assignedWorker
+	log.Printf("Worker:[%s] askTask done", w)
 	return nil
 }
 
-func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) ([]KeyValue, error) {
+func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
+	// already worked task
+	if w.status >= workedWorker {
+		return nil
+	}
+
 	filePath := w.inputFile
 	file, err := os.Open(filePath)
 	if err != nil {
-		log.Printf("Worker:[%v] mapTask readFile err:[%v]", w, err)
-		return nil, err
+		log.Printf("Worker:[%s] handleMapTask err:[%v]", w, err)
+		return err
 	}
 	defer file.Close()
 
 	content, err := ioutil.ReadAll(file)
 	if err != nil {
-		log.Printf("Worker:[%v] mapTask readFile err:[%v]", w, err)
-		return nil, err
+		log.Printf("Worker:[%s] handleMapTask err:[%v]", w, err)
+		return err
 	}
 
 	kva := mapf(filepath.Base(filePath), string(content))
@@ -132,16 +158,28 @@ func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) ([]KeyValue
 	for _, entry := range kva {
 		tempFile, err := w.getIntermediateTempFile(entry.Key)
 		if err != nil {
-			return nil, err
+			log.Printf("Worker:[%s] getIntermediateTempFile err:[%v]", w, err)
+			return err
 		}
+		// TODO
+		log.Println(tempFile)
+
 		encoder := json.NewEncoder(tempFile)
 		if err := encoder.Encode(entry); err != nil {
-			return nil, err
+			log.Printf("Worker:[%s] json encode err:[%v]", w, err)
+			return err
 		}
-		tempFile.WriteString("\r\n")
+		if _, err = tempFile.WriteString("\r\n"); err != nil {
+			log.Printf("Worker:[%s] writeString err:[%v]", w, err)
+			return err
+		}
+		// TODO
+		// os.rename
 	}
 
-	return kva, nil
+	w.status = workedWorker
+	log.Printf("Worker:[%s] handleMapTask done", w)
+	return nil
 }
 
 func (w *Worker) getIntermediateTempFile(key string) (*os.File, error) {
@@ -160,6 +198,64 @@ func (w *Worker) getIntermediateTempFile(key string) (*os.File, error) {
 	return tempFile, nil
 }
 
+func (w *Worker) replyMapTask(handleErr error) error {
+	// already replied
+	if w.status >= repliedWorker {
+		return nil
+	}
+
+	var args MapTaskArgs
+	if handleErr != nil {
+		args = MapTaskArgs{id: w.id, taskStatus: taskErr}
+	} else {
+		args = MapTaskArgs{
+			id:                       w.id,
+			taskStatus:               taskDone,
+			intermediateFilePathList: w.intermediateFilePathList,
+		}
+	}
+
+	reply := MapTaskReply{}
+	if err := w.call(RpcMapTask, &args, &reply); err != nil {
+		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, err)
+		return err
+	}
+
+	if reply.err != nil {
+		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, reply.err)
+	}
+
+	w.status = repliedWorker
+	log.Printf("Worker:[%s] replyMapTask done", w)
+	return nil
+}
+
+func (w *Worker) reset() {
+	w.id = newId()
+	w.taskType = 0
+	w.status = idleWorker
+	w.nReduce = 0
+	w.inputFile = ""
+	w.intermediateFilePathList = []string{}
+	w.outputFile = ""
+	w.retryCount = 0
+	w.tmpFileMap = make(map[int]*os.File)
+}
+
+func newWorker() *Worker {
+	return &Worker{
+		id:                       newId(),
+		taskType:                 0,
+		status:                   idleWorker,
+		nReduce:                  0,
+		inputFile:                "",
+		intermediateFilePathList: []string{},
+		outputFile:               "",
+		retryCount:               0,
+		tmpFileMap:               make(map[int]*os.File),
+	}
+}
+
 func newId() string {
 	return strconv.Itoa(rand.Intn(10))
 }
@@ -174,13 +270,13 @@ func (w *Worker) call(rpcname string, args interface{}, reply interface{}) error
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Printf("Worker:[%v] dialing err:[%v]", w, err)
+		//log.Printf("Worker:[%v] dialing err:[%v]", w, err)
 		return err
 	}
 	defer c.Close()
 
 	if err = c.Call(rpcname, args, reply); err != nil {
-		log.Printf("Worker:[%v], call err:[%v]", w, err)
+		//log.Printf("Worker:[%v], call err:[%v]", w, err)
 		return err
 	}
 

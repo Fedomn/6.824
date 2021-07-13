@@ -35,3 +35,11 @@ Challenges:
 
 - 实现自己的MapReduce application，如 Distributed Grep
 - 让coordinator和worker在真实的不同机器上运行，read/write files使用shared file system 比如S3
+
+### Lab 1 总结
+
+Logging策略
+
+- 在main logic主函数里，不打err的日志，只记录 成功或retry 日志
+- err的日志，在main logic调用的function里记录
+- main logic调用function A，A以下的function日志尽量避免，留给function A记录

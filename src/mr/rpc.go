@@ -7,38 +7,57 @@ import (
 )
 import "strconv"
 
-const Timeout = time.Second * 10
-const AskTaskInterval = time.Second
-const AskTaskMaxCount = 10
+const TaskRetryInterval = time.Second
+const TaskMaxRetryCount = 10
 
 const RpcAskTask = "Coordinator.AskTask"
+const RpcMapTask = "Coordinator.MapTask"
 
 // task types
 const (
-	mapTask = iota
+	mapTask = iota + 1
 	reduceTask
 )
 
-// worker states
+// worker status for state machine
 const (
-	idleWorker = iota
-	workingWorker
+	idleWorker = iota + 1
+	assignedWorker
+	workedWorker
+	repliedWorker
 	lostWorker
+)
+
+// task status
+const (
+	taskDone = iota + 1
+	taskErr
 )
 
 // AskTaskArgs also as a heartbeat request
 type AskTaskArgs struct {
-	id string // ask worker identifier
+	Id string // ask worker identifier
 }
 
 type AskTaskReply struct {
 	// for normal flow
-	nReduce                  int      // reduce task count
-	taskType                 int      // task type
-	inputFile                string   // for map task input
-	intermediateFilePathList []string // for map task outputs or reduce task inputs
+	NReduce                  int      // reduce task count
+	TaskType                 int      // task type
+	InputFile                string   // for map task input
+	IntermediateFilePathList []string // for map task outputs or reduce task inputs
 
-	err error // for errors that includes heartbeat error
+	Err error // for errors that includes heartbeat error
+}
+
+type MapTaskArgs struct {
+	id         string // worker identifier
+	taskStatus int    // task status
+
+	intermediateFilePathList []string
+}
+
+type MapTaskReply struct {
+	err error
 }
 
 var (
