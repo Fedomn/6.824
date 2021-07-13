@@ -9,6 +9,7 @@ import "strconv"
 
 const Timeout = time.Second * 10
 const AskTaskInterval = time.Second
+const AskTaskMaxCount = 10
 
 const RpcAskTask = "Coordinator.AskTask"
 
@@ -32,6 +33,7 @@ type AskTaskArgs struct {
 
 type AskTaskReply struct {
 	// for normal flow
+	nReduce                  int      // reduce task count
 	taskType                 int      // task type
 	inputFile                string   // for map task input
 	intermediateFilePathList []string // for map task outputs or reduce task inputs
