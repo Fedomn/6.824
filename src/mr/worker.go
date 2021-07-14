@@ -15,6 +15,10 @@ import (
 import "net/rpc"
 import "hash/fnv"
 
+func init() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+}
+
 //
 // Map functions return a slice of KeyValue.
 //
@@ -62,6 +66,7 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 
 			// replied task and reset worker
 			log.Printf("Worker:[%s] task already done, will aks new task", w)
+			log.Println("-----------")
 			w.reset()
 		}
 		if err == nil {
@@ -92,11 +97,11 @@ type Worker struct {
 	retryCount int // retry count
 
 	// for internal use
-	tmpFileMap map[int]*os.File // for intermediate temp file before os.rename
+	tmpFileMap map[int]*os.File // for intermediate temp file before os.rename, key is numOfReduceTask, value is filePointer
 }
 
 func (w *Worker) String() string {
-	return fmt.Sprintf("id:%s taskType:%d status:%d retryCount:%d", w.id, w.taskType, w.status, w.retryCount)
+	return fmt.Sprintf("id:%s taskType:%d nReduce:%d status:%d retryCount:%d", w.id, w.taskType, w.nReduce, w.status, w.retryCount)
 }
 
 func (w *Worker) askTask() error {
@@ -161,21 +166,19 @@ func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 			log.Printf("Worker:[%s] getIntermediateTempFile err:[%v]", w, err)
 			return err
 		}
-		// TODO
-		log.Println(tempFile)
 
 		encoder := json.NewEncoder(tempFile)
 		if err := encoder.Encode(entry); err != nil {
 			log.Printf("Worker:[%s] json encode err:[%v]", w, err)
 			return err
 		}
-		if _, err = tempFile.WriteString("\r\n"); err != nil {
-			log.Printf("Worker:[%s] writeString err:[%v]", w, err)
-			return err
-		}
-		// TODO
-		// os.rename
 	}
+
+	if err := w.commitIntermediateFile(); err != nil {
+		log.Printf("Worker:[%s] commitIntermediateFile err:[%v]", w, err)
+		return err
+	}
+	//log.Printf("Worker:[%s] commit intermediate success!", w)
 
 	w.status = workedWorker
 	log.Printf("Worker:[%s] handleMapTask done", w)
@@ -184,18 +187,40 @@ func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 
 func (w *Worker) getIntermediateTempFile(key string) (*os.File, error) {
 	numOfReduceTask := ihash(key) % w.nReduce
-	file, ok := w.tmpFileMap[numOfReduceTask]
-	if ok {
+	if file, ok := w.tmpFileMap[numOfReduceTask]; ok {
 		return file, nil
 	}
 	intermediateFileName := fmt.Sprintf("mr-%s-%d", w.id, numOfReduceTask)
-	tempFile, err := ioutil.TempFile("", intermediateFileName)
+	tempFile, err := ioutil.TempFile("", intermediateFileName+"-*")
 	if err != nil {
 		return nil, err
 	}
 
-	w.tmpFileMap[numOfReduceTask] = file
+	w.tmpFileMap[numOfReduceTask] = tempFile
 	return tempFile, nil
+}
+
+func (w *Worker) commitIntermediateFile() error {
+	for numOfReduceTask, tempFile := range w.tmpFileMap {
+		oldFilePath := tempFile.Name()
+		currentDir, err := filepath.Abs("./")
+		if err != nil {
+			return err
+		}
+		newFilePath := filepath.Join(currentDir, fmt.Sprintf("mr-%s-%d", w.id, numOfReduceTask))
+		if err := os.Rename(oldFilePath, newFilePath); err != nil {
+			return err
+		}
+		w.intermediateFilePathList = append(w.intermediateFilePathList, newFilePath)
+	}
+
+	// close tmpFiles
+	for _, tempFile := range w.tmpFileMap {
+		if err := tempFile.Close(); err != nil {
+			log.Printf("Worker:[%s] close tmpFile err:[%v]", w, err)
+		}
+	}
+	return nil
 }
 
 func (w *Worker) replyMapTask(handleErr error) error {
@@ -206,12 +231,12 @@ func (w *Worker) replyMapTask(handleErr error) error {
 
 	var args MapTaskArgs
 	if handleErr != nil {
-		args = MapTaskArgs{id: w.id, taskStatus: taskErr}
+		args = MapTaskArgs{Id: w.id, TaskStatus: taskErr}
 	} else {
 		args = MapTaskArgs{
-			id:                       w.id,
-			taskStatus:               taskDone,
-			intermediateFilePathList: w.intermediateFilePathList,
+			Id:                       w.id,
+			TaskStatus:               taskDone,
+			IntermediateFilePathList: w.intermediateFilePathList,
 		}
 	}
 
@@ -221,8 +246,8 @@ func (w *Worker) replyMapTask(handleErr error) error {
 		return err
 	}
 
-	if reply.err != nil {
-		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, reply.err)
+	if reply.Err != nil {
+		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, reply.Err)
 	}
 
 	w.status = repliedWorker
@@ -231,7 +256,6 @@ func (w *Worker) replyMapTask(handleErr error) error {
 }
 
 func (w *Worker) reset() {
-	w.id = newId()
 	w.taskType = 0
 	w.status = idleWorker
 	w.nReduce = 0
@@ -257,6 +281,7 @@ func newWorker() *Worker {
 }
 
 func newId() string {
+	rand.Seed(time.Now().UnixNano())
 	return strconv.Itoa(rand.Intn(10))
 }
 

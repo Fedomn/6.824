@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"container/list"
 	"log"
 	"sync"
 )
@@ -8,6 +9,10 @@ import "net"
 import "os"
 import "net/rpc"
 import "net/http"
+
+func init() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+}
 
 type worker struct {
 	id     string
@@ -18,8 +23,8 @@ type Coordinator struct {
 	filePathList []string // input files
 
 	assignTaskLock sync.Mutex
-	mapTasks       []string
-	reduceTasks    []string
+	mapTasks       list.List
+	reduceTasks    list.List
 
 	nMap    int // map worker count
 	nReduce int // reduce worker count
@@ -36,8 +41,12 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 	return nil
 }
 
-func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) {
+func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
+	log.Printf("Coordinator:[%v] get MapTask", c)
 
+	log.Println(args)
+
+	return nil
 }
 
 func (c *Coordinator) popMapTask() string {

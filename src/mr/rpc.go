@@ -50,14 +50,14 @@ type AskTaskReply struct {
 }
 
 type MapTaskArgs struct {
-	id         string // worker identifier
-	taskStatus int    // task status
+	Id         string // worker identifier
+	TaskStatus int    // task status
 
-	intermediateFilePathList []string
+	IntermediateFilePathList []string
 }
 
 type MapTaskReply struct {
-	err error
+	Err error
 }
 
 var (

@@ -1,5 +1,5 @@
 clean:
-	rm mr-out*
+	rm mr-*
 
 # lab 1
 wc:
@@ -11,5 +11,5 @@ seqrun: wc
 coord:
 	go run -race mrcoordinator.go pg-*.txt
 
-worker: wc
+worker: wc clean
 	go run -race mrworker.go wc.so
