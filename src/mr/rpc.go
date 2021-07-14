@@ -1,7 +1,6 @@
 package mr
 
 import (
-	"errors"
 	"os"
 	"time"
 )
@@ -15,8 +14,8 @@ const RpcMapTask = "Coordinator.MapTask"
 
 // task types
 const (
-	mapTask = iota + 1
-	reduceTask
+	mapTaskType = iota + 1
+	reduceTaskType
 )
 
 // worker status for state machine
@@ -26,12 +25,6 @@ const (
 	workedWorker
 	repliedWorker
 	lostWorker
-)
-
-// task status
-const (
-	taskDone = iota + 1
-	taskErr
 )
 
 // AskTaskArgs also as a heartbeat request
@@ -46,12 +39,12 @@ type AskTaskReply struct {
 	InputFile                string   // for map task input
 	IntermediateFilePathList []string // for map task outputs or reduce task inputs
 
-	Err error // for errors that includes heartbeat error
+	Err string // for errors that includes heartbeat error
 }
 
+// worker肯定是完成了mapTask，否则怎么有脸reply呢，肯定是继续重复处理task
 type MapTaskArgs struct {
-	Id         string // worker identifier
-	TaskStatus int    // task status
+	Id string // worker identifier
 
 	IntermediateFilePathList []string
 }
@@ -60,9 +53,9 @@ type MapTaskReply struct {
 	Err error
 }
 
-var (
-	ErrTaskNotReady     = errors.New("task not ready, please retry")
-	ErrConflictWorkerId = errors.New("conflict worker identifier")
+const (
+	ErrTaskNotReady     = "task not ready, please retry"
+	ErrConflictWorkerId = "conflict worker identifier"
 )
 
 // Cook up a unique-ish UNIX-domain socket name

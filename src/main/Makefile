@@ -1,5 +1,5 @@
 clean:
-	rm mr-*
+	rm mr-* || true
 
 # lab 1
 wc:

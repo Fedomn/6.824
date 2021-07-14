@@ -2,8 +2,10 @@ package mr
 
 import (
 	"container/list"
+	"errors"
 	"log"
 	"sync"
+	"time"
 )
 import "net"
 import "os"
@@ -19,12 +21,34 @@ type worker struct {
 	status int
 }
 
+type taskStatus int
+
+const (
+	freshTask taskStatus = iota + 1
+	assignedTask
+	finishedTask
+)
+
+type mapTask struct {
+	inputFilePath      string
+	associatedWorkerId string
+	taskStartTime      time.Time
+	status             taskStatus
+}
+
+type reduceTask struct {
+	inputFilePathList  []string
+	associatedWorkerId string
+	taskStartTime      time.Time
+	status             taskStatus
+}
+
 type Coordinator struct {
 	filePathList []string // input files
 
 	assignTaskLock sync.Mutex
-	mapTasks       list.List
-	reduceTasks    list.List
+	mapTasks       *list.List
+	reduceTasks    *list.List
 
 	nMap    int // map worker count
 	nReduce int // reduce worker count
@@ -34,27 +58,78 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 	c.assignTaskLock.Lock()
 	defer c.assignTaskLock.Unlock()
 
-	reply.NReduce = 2
-	reply.TaskType = mapTask
-	reply.InputFile = c.filePathList[0]
+	for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
+		task := elem.Value.(mapTask)
+		// please change worker id first
+		if args.Id == task.associatedWorkerId {
+			reply.Err = ErrConflictWorkerId
+			return nil
+		}
 
+		if task.status == freshTask {
+			// reply worker
+			reply.NReduce = c.nReduce
+			reply.TaskType = mapTaskType
+			reply.InputFile = task.inputFilePath
+
+			// set task
+			elem.Value = mapTask{
+				inputFilePath:      task.inputFilePath,
+				associatedWorkerId: args.Id,
+				taskStartTime:      time.Now(),
+				status:             assignedTask,
+			}
+			return nil
+		}
+	}
+
+	// no enough fresh task
+	reply.Err = ErrTaskNotReady
 	return nil
 }
 
 func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
-	log.Printf("Coordinator:[%v] get MapTask", c)
+	log.Println("Coordinator get MapTask reply")
+	c.assignTaskLock.Lock()
+	defer c.assignTaskLock.Unlock()
 
-	log.Println(args)
+	for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
+		task := elem.Value.(mapTask)
+		if task.associatedWorkerId == args.Id {
+			// reply worker
+			reply.Err = nil
 
+			// finish map task
+			elem.Value = mapTask{
+				inputFilePath:      task.inputFilePath,
+				associatedWorkerId: task.associatedWorkerId,
+				taskStartTime:      task.taskStartTime,
+				status:             finishedTask,
+			}
+
+			// add reduce task
+			c.reduceTasks.PushBack(reduceTask{
+				inputFilePathList:  args.IntermediateFilePathList,
+				associatedWorkerId: "",
+				taskStartTime:      time.Time{},
+				status:             freshTask,
+			})
+
+			c.logMapTasks()
+			return nil
+		}
+	}
+
+	reply.Err = errors.New("not found associated map task, maybe reassign to another worker")
+	c.logMapTasks()
 	return nil
 }
 
-func (c *Coordinator) popMapTask() string {
-	return ""
-}
-
-func (c *Coordinator) pushMapTask() string {
-	return ""
+func (c *Coordinator) logMapTasks() {
+	for front := c.mapTasks.Front(); front != nil; front = front.Next() {
+		task := front.Value.(mapTask)
+		log.Printf("Current MapTask:[%+v]", task)
+	}
 }
 
 //
@@ -93,11 +168,20 @@ func (c *Coordinator) Done() bool {
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
 		filePathList: files,
-		nMap:         nReduce,
+		nMap:         len(files),
 		nReduce:      nReduce,
+		mapTasks:     list.New(),
+		reduceTasks:  list.New(),
 	}
 
-	// Your code here.
+	for _, filePath := range files {
+		c.mapTasks.PushBack(mapTask{
+			inputFilePath:      filePath,
+			associatedWorkerId: "",
+			taskStartTime:      time.Time{},
+			status:             freshTask,
+		})
+	}
 
 	c.server()
 	return &c

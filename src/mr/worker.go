@@ -52,16 +52,17 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 				break
 			}
 
-			if w.taskType == mapTask {
+			if w.taskType == mapTaskType {
 				if err = w.handleMapTask(mapf); err != nil {
 					break
 				}
-				if err = w.replyMapTask(err); err != nil {
+				if err = w.replyMapTask(); err != nil {
 					break
 				}
-			} else if w.taskType == reduceTask {
+			} else if w.taskType == reduceTaskType {
 			} else {
-				log.Printf("Worker:[%s] receive unrecognized taskType", w)
+				log.Printf("Worker:[%s] receive unrecognized taskType:[%v]", w, w.taskType)
+				err = errors.New("unrecognized taskType")
 			}
 
 			// replied task and reset worker
@@ -85,7 +86,8 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 }
 
 type Worker struct {
-	id       string
+	instance string // for host instance distinguish
+	id       string // for task level distinguish
 	taskType int
 	status   int
 	nReduce  int
@@ -101,7 +103,7 @@ type Worker struct {
 }
 
 func (w *Worker) String() string {
-	return fmt.Sprintf("id:%s taskType:%d nReduce:%d status:%d retryCount:%d", w.id, w.taskType, w.nReduce, w.status, w.retryCount)
+	return fmt.Sprintf("instance:%s id:%s taskType:%d nReduce:%d status:%d retryCount:%d", w.instance, w.id, w.taskType, w.nReduce, w.status, w.retryCount)
 }
 
 func (w *Worker) askTask() error {
@@ -119,12 +121,12 @@ func (w *Worker) askTask() error {
 		return err
 	}
 
-	if err := reply.Err; err != nil {
+	if err := reply.Err; err != "" {
 		log.Printf("Worker:[%s] askTask err:[%v]", w, err)
-		if errors.Is(err, ErrConflictWorkerId) {
+		if err == ErrConflictWorkerId {
 			w.id = newId()
 		}
-		return err
+		return errors.New(ErrConflictWorkerId)
 	}
 
 	w.nReduce = reply.NReduce
@@ -190,7 +192,7 @@ func (w *Worker) getIntermediateTempFile(key string) (*os.File, error) {
 	if file, ok := w.tmpFileMap[numOfReduceTask]; ok {
 		return file, nil
 	}
-	intermediateFileName := fmt.Sprintf("mr-%s-%d", w.id, numOfReduceTask)
+	intermediateFileName := w.intermediateFileName(numOfReduceTask)
 	tempFile, err := ioutil.TempFile("", intermediateFileName+"-*")
 	if err != nil {
 		return nil, err
@@ -207,7 +209,7 @@ func (w *Worker) commitIntermediateFile() error {
 		if err != nil {
 			return err
 		}
-		newFilePath := filepath.Join(currentDir, fmt.Sprintf("mr-%s-%d", w.id, numOfReduceTask))
+		newFilePath := filepath.Join(currentDir, w.intermediateFileName(numOfReduceTask))
 		if err := os.Rename(oldFilePath, newFilePath); err != nil {
 			return err
 		}
@@ -223,21 +225,19 @@ func (w *Worker) commitIntermediateFile() error {
 	return nil
 }
 
-func (w *Worker) replyMapTask(handleErr error) error {
+func (w *Worker) intermediateFileName(numOfReduceTask int) string {
+	return fmt.Sprintf("mr-%s-%s-%d", w.instance, w.id, numOfReduceTask)
+}
+
+func (w *Worker) replyMapTask() error {
 	// already replied
 	if w.status >= repliedWorker {
 		return nil
 	}
 
-	var args MapTaskArgs
-	if handleErr != nil {
-		args = MapTaskArgs{Id: w.id, TaskStatus: taskErr}
-	} else {
-		args = MapTaskArgs{
-			Id:                       w.id,
-			TaskStatus:               taskDone,
-			IntermediateFilePathList: w.intermediateFilePathList,
-		}
+	args := MapTaskArgs{
+		Id:                       w.id,
+		IntermediateFilePathList: w.intermediateFilePathList,
 	}
 
 	reply := MapTaskReply{}
@@ -256,6 +256,7 @@ func (w *Worker) replyMapTask(handleErr error) error {
 }
 
 func (w *Worker) reset() {
+	w.id = newId()
 	w.taskType = 0
 	w.status = idleWorker
 	w.nReduce = 0
@@ -268,6 +269,7 @@ func (w *Worker) reset() {
 
 func newWorker() *Worker {
 	return &Worker{
+		instance:                 newId(),
 		id:                       newId(),
 		taskType:                 0,
 		status:                   idleWorker,
@@ -282,7 +284,7 @@ func newWorker() *Worker {
 
 func newId() string {
 	rand.Seed(time.Now().UnixNano())
-	return strconv.Itoa(rand.Intn(10))
+	return strconv.Itoa(rand.Intn(100))
 }
 
 //
