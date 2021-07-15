@@ -43,6 +43,8 @@ func ihash(key string) int {
 func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	w := newWorker()
 
+	go w.healthBeats()
+
 	for {
 
 		// main logic
@@ -308,4 +310,22 @@ func (w *Worker) call(rpcname string, args interface{}, reply interface{}) error
 	}
 
 	return nil
+}
+
+func (w *Worker) healthBeats() {
+	for {
+		if w.status >= assignedWorker {
+			time.Sleep(TaskHealthBeatsInterval)
+			continue
+		}
+		args := HealthBeatsArgs{
+			Id:  w.id,
+			Now: time.Now(),
+		}
+		if err := w.call(RpcHealthBeats, &args, nil); err != nil {
+			log.Printf("Worker:[%v] healthBeats err:[%v]", w, err)
+		}
+
+		time.Sleep(TaskHealthBeatsInterval)
+	}
 }

@@ -50,6 +50,9 @@ type Coordinator struct {
 	mapTasks       *list.List
 	reduceTasks    *list.List
 
+	healthBeatsLock   sync.Mutex
+	workerHealthBeats map[string]time.Time
+
 	nMap    int // map worker count
 	nReduce int // reduce worker count
 }
@@ -130,6 +133,40 @@ func (c *Coordinator) logMapTasks() {
 		task := front.Value.(mapTask)
 		log.Printf("Current MapTask:[%+v]", task)
 	}
+}
+
+func (c *Coordinator) HealthBeats(args *HealthBeatsArgs) error {
+	c.healthBeatsLock.Lock()
+	defer c.healthBeatsLock.Unlock()
+
+	c.workerHealthBeats[args.Id] = args.Now
+	return nil
+}
+
+func (c *Coordinator) evictUnhealthyWorker() {
+	c.healthBeatsLock.Lock()
+	defer c.healthBeatsLock.Unlock()
+
+	healthMap := make(map[string]bool)
+	for workerId, workerLastHealthTime := range c.workerHealthBeats {
+		workerCanMaxDelayTime := workerLastHealthTime.Add(TaskHealthBeatsMaxDelayTime)
+		if time.Now().After(workerCanMaxDelayTime) {
+			healthMap[workerId] = false
+		} else {
+			healthMap[workerId] = true
+		}
+	}
+
+	log.Printf("Current healthMap:[%v]", healthMap)
+
+	// reset assigned task to fresh
+	c.assignTaskLock.Lock()
+	defer c.assignTaskLock.Unlock()
+
+	// for map task
+
+
+	// for reduce task
 }
 
 //

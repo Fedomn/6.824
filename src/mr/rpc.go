@@ -8,9 +8,12 @@ import "strconv"
 
 const TaskRetryInterval = time.Second
 const TaskMaxRetryCount = 10
+const TaskHealthBeatsInterval = time.Second
+const TaskHealthBeatsMaxDelayTime = time.Second * 5
 
 const RpcAskTask = "Coordinator.AskTask"
 const RpcMapTask = "Coordinator.MapTask"
+const RpcHealthBeats = "Coordinator.HealthBeats"
 
 // task types
 const (
@@ -27,7 +30,11 @@ const (
 	lostWorker
 )
 
-// AskTaskArgs also as a heartbeat request
+type HealthBeatsArgs struct {
+	Id  string
+	Now time.Time
+}
+
 type AskTaskArgs struct {
 	Id string // ask worker identifier
 }
@@ -39,7 +46,7 @@ type AskTaskReply struct {
 	InputFile                string   // for map task input
 	IntermediateFilePathList []string // for map task outputs or reduce task inputs
 
-	Err string // for errors that includes heartbeat error
+	Err string
 }
 
 // worker肯定是完成了mapTask，否则怎么有脸reply呢，肯定是继续重复处理task
