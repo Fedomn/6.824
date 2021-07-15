@@ -51,6 +51,7 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 		// main logic
 		var err error
 		for i := true; i; i = false {
+			// TODO handle ErrTaskNotReady
 			if err = w.askTask(); err != nil {
 				break
 			}
@@ -136,8 +137,10 @@ func (w *Worker) askTask() error {
 			w.lock.Lock()
 			w.id = newId()
 			w.lock.Unlock()
+		} else if err == ErrTaskNotReady {
+		} else {
+			return errors.New(err)
 		}
-		return errors.New(ErrConflictWorkerId)
 	}
 
 	w.lock.Lock()
@@ -332,7 +335,7 @@ func (w *Worker) healthBeats() {
 		workerStatus := w.status
 		workerId := w.id
 		w.lock.Unlock()
-		
+
 		if workerStatus >= assignedWorker {
 			time.Sleep(TaskHealthBeatsInterval)
 			continue
@@ -344,6 +347,8 @@ func (w *Worker) healthBeats() {
 		if err := w.call(RpcHealthBeats, &args, nil); err != nil {
 			log.Printf("Worker:[%v] healthBeats err:[%v]", w, err)
 		}
+
+		// TODO auto shutdown when coordinator not reply after many times
 
 		time.Sleep(TaskHealthBeatsInterval)
 	}
