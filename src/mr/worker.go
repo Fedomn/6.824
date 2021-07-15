@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 )
 import "net/rpc"
@@ -70,7 +71,10 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 			// replied task and reset worker
 			log.Printf("Worker:[%s] task already done, will aks new task", w)
 			log.Println("-----------")
+
+			w.lock.Lock()
 			w.reset()
+			w.lock.Unlock()
 		}
 		if err == nil {
 			continue
@@ -102,6 +106,9 @@ type Worker struct {
 
 	// for internal use
 	tmpFileMap map[int]*os.File // for intermediate temp file before os.rename, key is numOfReduceTask, value is filePointer
+
+	// for data race when heartbeats
+	lock sync.Mutex
 }
 
 func (w *Worker) String() string {
@@ -126,17 +133,21 @@ func (w *Worker) askTask() error {
 	if err := reply.Err; err != "" {
 		log.Printf("Worker:[%s] askTask err:[%v]", w, err)
 		if err == ErrConflictWorkerId {
+			w.lock.Lock()
 			w.id = newId()
+			w.lock.Unlock()
 		}
 		return errors.New(ErrConflictWorkerId)
 	}
 
+	w.lock.Lock()
 	w.nReduce = reply.NReduce
 	w.taskType = reply.TaskType
 	w.inputFile = reply.InputFile
 	w.intermediateFilePathList = reply.IntermediateFilePathList
 
 	w.status = assignedWorker
+	w.lock.Unlock()
 	log.Printf("Worker:[%s] askTask done", w)
 	return nil
 }
@@ -184,7 +195,9 @@ func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 	}
 	//log.Printf("Worker:[%s] commit intermediate success!", w)
 
+	w.lock.Lock()
 	w.status = workedWorker
+	w.lock.Unlock()
 	log.Printf("Worker:[%s] handleMapTask done", w)
 	return nil
 }
@@ -251,8 +264,9 @@ func (w *Worker) replyMapTask() error {
 	if reply.Err != nil {
 		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, reply.Err)
 	}
-
+	w.lock.Lock()
 	w.status = repliedWorker
+	w.lock.Unlock()
 	log.Printf("Worker:[%s] replyMapTask done", w)
 	return nil
 }
@@ -314,12 +328,17 @@ func (w *Worker) call(rpcname string, args interface{}, reply interface{}) error
 
 func (w *Worker) healthBeats() {
 	for {
-		if w.status >= assignedWorker {
+		w.lock.Lock()
+		workerStatus := w.status
+		workerId := w.id
+		w.lock.Unlock()
+		
+		if workerStatus >= assignedWorker {
 			time.Sleep(TaskHealthBeatsInterval)
 			continue
 		}
 		args := HealthBeatsArgs{
-			Id:  w.id,
+			Id:  workerId,
 			Now: time.Now(),
 		}
 		if err := w.call(RpcHealthBeats, &args, nil); err != nil {

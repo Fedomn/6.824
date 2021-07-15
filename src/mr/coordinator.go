@@ -50,8 +50,8 @@ type Coordinator struct {
 	mapTasks       *list.List
 	reduceTasks    *list.List
 
-	healthBeatsLock   sync.Mutex
-	workerHealthBeats map[string]time.Time
+	healthBeatsLock            sync.Mutex
+	healthBeatsForAssignedTask map[string]time.Time
 
 	nMap    int // map worker count
 	nReduce int // reduce worker count
@@ -63,7 +63,7 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 
 	for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 		task := elem.Value.(mapTask)
-		// please change worker id first
+		// worker id conflict, please change worker id first
 		if args.Id == task.associatedWorkerId {
 			reply.Err = ErrConflictWorkerId
 			return nil
@@ -82,6 +82,10 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 				taskStartTime:      time.Now(),
 				status:             assignedTask,
 			}
+
+			c.healthBeatsLock.Lock()
+			c.healthBeatsForAssignedTask[args.Id] = time.Now()
+			c.healthBeatsLock.Unlock()
 			return nil
 		}
 	}
@@ -118,6 +122,9 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 				status:             freshTask,
 			})
 
+			c.healthBeatsLock.Lock()
+			delete(c.healthBeatsForAssignedTask, args.Id)
+			c.healthBeatsLock.Unlock()
 			c.logMapTasks()
 			return nil
 		}
@@ -135,38 +142,41 @@ func (c *Coordinator) logMapTasks() {
 	}
 }
 
-func (c *Coordinator) HealthBeats(args *HealthBeatsArgs) error {
+func (c *Coordinator) HealthBeats(args *HealthBeatsArgs, reply *HealthBeatsReply) error {
 	c.healthBeatsLock.Lock()
 	defer c.healthBeatsLock.Unlock()
 
-	c.workerHealthBeats[args.Id] = args.Now
+	c.healthBeatsForAssignedTask[args.Id] = args.Now
 	return nil
 }
 
-func (c *Coordinator) evictUnhealthyWorker() {
-	c.healthBeatsLock.Lock()
-	defer c.healthBeatsLock.Unlock()
+func (c *Coordinator) evictUnhealthyAssignedWorker() {
+	for {
+		c.healthBeatsLock.Lock()
 
-	healthMap := make(map[string]bool)
-	for workerId, workerLastHealthTime := range c.workerHealthBeats {
-		workerCanMaxDelayTime := workerLastHealthTime.Add(TaskHealthBeatsMaxDelayTime)
-		if time.Now().After(workerCanMaxDelayTime) {
-			healthMap[workerId] = false
-		} else {
-			healthMap[workerId] = true
+		healthMap := make(map[string]bool)
+		for workerId, workerLastHealthTime := range c.healthBeatsForAssignedTask {
+			workerCanMaxDelayTime := workerLastHealthTime.Add(TaskHealthBeatsMaxDelayTime)
+			if time.Now().After(workerCanMaxDelayTime) {
+				healthMap[workerId] = false
+			} else {
+				healthMap[workerId] = true
+			}
 		}
+
+		log.Printf("Current assignedWoker healthMap:[%v]", healthMap)
+		c.healthBeatsLock.Unlock()
+
+		// reset assigned task to fresh
+		c.assignTaskLock.Lock()
+		c.assignTaskLock.Unlock()
+
+		// for map task
+
+		// for reduce task
+
+		time.Sleep(CoordEvictUnhealthyWorkerTime)
 	}
-
-	log.Printf("Current healthMap:[%v]", healthMap)
-
-	// reset assigned task to fresh
-	c.assignTaskLock.Lock()
-	defer c.assignTaskLock.Unlock()
-
-	// for map task
-
-
-	// for reduce task
 }
 
 //
@@ -204,11 +214,12 @@ func (c *Coordinator) Done() bool {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		filePathList: files,
-		nMap:         len(files),
-		nReduce:      nReduce,
-		mapTasks:     list.New(),
-		reduceTasks:  list.New(),
+		filePathList:               files,
+		nMap:                       len(files),
+		nReduce:                    nReduce,
+		mapTasks:                   list.New(),
+		reduceTasks:                list.New(),
+		healthBeatsForAssignedTask: make(map[string]time.Time),
 	}
 
 	for _, filePath := range files {
@@ -221,5 +232,6 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	c.server()
+	go c.evictUnhealthyAssignedWorker()
 	return &c
 }

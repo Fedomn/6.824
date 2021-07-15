@@ -5,6 +5,9 @@ clean:
 wc:
 	go build -race -buildmode=plugin ../mrapps/wc.go
 
+crash:
+	go build -race -buildmode=plugin ../mrapps/crash.go
+
 seqrun: wc
 	go run -race mrsequential.go wc.so pg*.txt
 

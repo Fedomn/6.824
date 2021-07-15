@@ -11,6 +11,8 @@ const TaskMaxRetryCount = 10
 const TaskHealthBeatsInterval = time.Second
 const TaskHealthBeatsMaxDelayTime = time.Second * 5
 
+const CoordEvictUnhealthyWorkerTime = time.Second * 5
+
 const RpcAskTask = "Coordinator.AskTask"
 const RpcMapTask = "Coordinator.MapTask"
 const RpcHealthBeats = "Coordinator.HealthBeats"
@@ -34,6 +36,8 @@ type HealthBeatsArgs struct {
 	Id  string
 	Now time.Time
 }
+
+type HealthBeatsReply struct{}
 
 type AskTaskArgs struct {
 	Id string // ask worker identifier
