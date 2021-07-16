@@ -16,6 +16,7 @@ const CoordEvictUnhealthyWorkerTime = time.Second * 3
 
 const RpcAskTask = "Coordinator.AskTask"
 const RpcMapTask = "Coordinator.MapTask"
+const RpcReduceTask = "Coordinator.ReduceTask"
 const RpcHealthBeats = "Coordinator.HealthBeats"
 
 // task types
@@ -49,7 +50,8 @@ type AskTaskReply struct {
 	NReduce                  int      // reduce task count
 	TaskType                 int      // task type
 	InputFile                string   // for map task input
-	IntermediateFilePathList []string // for map task outputs or reduce task inputs
+	IntermediateFilePathList []string // for reduce task inputs
+	NumOfReduceTask          string   // for reduce task output filename
 
 	Err string
 }
@@ -62,6 +64,15 @@ type MapTaskArgs struct {
 }
 
 type MapTaskReply struct {
+	Err string
+}
+
+type ReduceTaskArgs struct {
+	Id         string // worker identifier
+	OutputFile string
+}
+
+type ReduceTaskReply struct {
 	Err string
 }
 

@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +30,14 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -64,9 +74,16 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 					break
 				}
 			} else if w.taskType == reduceTaskType {
+				if err = w.handleReduceTask(reducef); err != nil {
+					break
+				}
+				if err = w.replyReduceTask(); err != nil {
+					break
+				}
 			} else {
 				log.Printf("Worker:[%s] receive unrecognized taskType:[%v]", w, w.taskType)
 				err = errors.New("unrecognized taskType")
+				break
 			}
 
 			// replied task and reset worker
@@ -108,6 +125,7 @@ type Worker struct {
 
 	inputFile                string   // for map task input
 	intermediateFilePathList []string // for map task outputs or reduce task inputs
+	numOfReduceTask          string   // for reduce task output filename
 	outputFile               string   // for reduce task output
 
 	errRetryCount         int // error retry count
@@ -155,6 +173,7 @@ func (w *Worker) askTask() error {
 	w.taskType = reply.TaskType
 	w.inputFile = reply.InputFile
 	w.intermediateFilePathList = reply.IntermediateFilePathList
+	w.numOfReduceTask = reply.NumOfReduceTask
 
 	w.status = assignedWorker
 	w.lock.Unlock()
@@ -162,6 +181,7 @@ func (w *Worker) askTask() error {
 	return nil
 }
 
+/** for map task  **/
 func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 	// already worked task
 	if w.status >= workedWorker {
@@ -169,14 +189,7 @@ func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 	}
 
 	filePath := w.inputFile
-	file, err := os.Open(filePath)
-	if err != nil {
-		log.Printf("Worker:[%s] handleMapTask err:[%v]", w, err)
-		return err
-	}
-	defer file.Close()
-
-	content, err := ioutil.ReadAll(file)
+	content, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		log.Printf("Worker:[%s] handleMapTask err:[%v]", w, err)
 		return err
@@ -279,6 +292,118 @@ func (w *Worker) replyMapTask() error {
 	w.status = repliedWorker
 	w.lock.Unlock()
 	log.Printf("Worker:[%s] replyMapTask done", w)
+	return nil
+}
+
+/** for reduce task  **/
+func (w *Worker) handleReduceTask(reducef func(string, []string) string) error {
+	// already worked task
+	if w.status >= workedWorker {
+		return nil
+	}
+
+	// read all file into memory
+	// sort all KeyValue
+	intermediateKV := make([]KeyValue, 0)
+
+	for _, filePath := range w.intermediateFilePathList {
+		file, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("Worker:[%s] handleReduceTask err:[%v]", w, err)
+			return err
+		}
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			kv := KeyValue{}
+			text := scanner.Text()
+			decoder := json.NewDecoder(strings.NewReader(text))
+			if err := decoder.Decode(&kv); err != nil {
+				log.Printf("Worker:[%s] handleReduceTask decode err:[%v]", w, err)
+			} else {
+				intermediateKV = append(intermediateKV, kv)
+			}
+		}
+	}
+
+	sort.Sort(ByKey(intermediateKV))
+
+	// generate output file
+	outputFileName := w.outputFileName(w.numOfReduceTask)
+	tempFile, err := ioutil.TempFile("", outputFileName)
+	if err != nil {
+		log.Printf("Worker:[%s] handleReduceTask gen tempFile err:[%v]", w, err)
+		return err
+	}
+
+	// call Reduce on each distinct key in intermediateKV and print the result to outputFile
+	i := 0
+	for i < len(intermediateKV) {
+		// 准备i和j两个指针，开始指向第0和第1个元素，在依次往下走
+		j := i + 1
+		// 一直往遍历数组，直到找到一个位置，和i所在的key 不相等
+		for j < len(intermediateKV) && intermediateKV[j].Key == intermediateKV[i].Key {
+			j++
+		}
+		// 把上面遍历的所有值 copy 到values里
+		var values []string
+		for k := i; k < j; k++ {
+			values = append(values, intermediateKV[i].Value)
+		}
+		output := reducef(intermediateKV[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		if _, err := fmt.Fprintf(tempFile, "%v %v\n", intermediateKV[i].Key, output); err != nil {
+			return err
+		}
+
+		i = j
+	}
+
+	// commit tempFile
+	_ = tempFile.Close()
+	currentDir, _ := filepath.Abs("./")
+	outputFilePath := filepath.Join(currentDir, outputFileName)
+	if os.Rename(tempFile.Name(), outputFilePath) != nil {
+		return err
+	}
+	w.outputFile = outputFilePath
+
+	w.lock.Lock()
+	w.status = workedWorker
+	w.lock.Unlock()
+	log.Printf("Worker:[%s] handleReduceTask done", w)
+	return nil
+}
+
+func (w *Worker) outputFileName(numOfReduceTask string) string {
+	return fmt.Sprintf("mr-out-%s-%s-%s", w.instance, w.id, numOfReduceTask)
+}
+
+func (w *Worker) replyReduceTask() error {
+	// already replied
+	if w.status >= repliedWorker {
+		return nil
+	}
+
+	args := ReduceTaskArgs{
+		Id:         w.id,
+		OutputFile: w.outputFile,
+	}
+	reply := ReduceTaskReply{}
+	if err := w.call(RpcReduceTask, &args, &reply); err != nil {
+		log.Printf("Worker:[%s] replyReduceTask err:[%v]", w, err)
+		return err
+	}
+	if reply.Err != "" {
+		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, reply.Err)
+		// 作为worker活已经干完了，并且也reply给了coord, 即使coord reply了err，worker需要看情况处理，这里选择性忽略
+	}
+
+	w.lock.Lock()
+	w.status = repliedWorker
+	w.lock.Unlock()
+	log.Printf("Worker:[%s] replyReduceTask done", w)
 	return nil
 }
 

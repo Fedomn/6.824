@@ -2,7 +2,10 @@ package mr
 
 import (
 	"container/list"
+	"fmt"
 	"log"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,11 +16,6 @@ import "net/http"
 
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-}
-
-type worker struct {
-	id     string
-	status int
 }
 
 type taskStatus int
@@ -32,22 +30,49 @@ type mapTask struct {
 	inputFilePath      string
 	associatedWorkerId string
 	taskStartTime      time.Time
+	taskEndTime        time.Time
 	status             taskStatus
 }
 
+func (m mapTask) String() string {
+	return fmt.Sprintf(
+		"inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
+		m.inputFilePath,
+		m.associatedWorkerId,
+		m.taskStartTime.Format("15:04:05"),
+		m.taskEndTime.Format("15:04:05"),
+		m.status,
+	)
+}
+
 type reduceTask struct {
+	numOfReduceTask    string
 	inputFilePathList  []string
 	associatedWorkerId string
 	taskStartTime      time.Time
+	taskEndTime        time.Time
 	status             taskStatus
+	outputFile         string
+}
+
+func (m reduceTask) String() string {
+	return fmt.Sprintf(
+		"inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
+		m.inputFilePathList,
+		m.associatedWorkerId,
+		m.taskStartTime.Format("15:04:05"),
+		m.taskEndTime.Format("15:04:05"),
+		m.status,
+	)
 }
 
 type Coordinator struct {
 	filePathList []string // input files
 
-	assignTaskLock sync.Mutex
-	mapTasks       *list.List
-	reduceTasks    *list.List
+	assignTaskLock           sync.Mutex
+	mapTasks                 *list.List
+	intermediateFilePathList []string // for storing map task intermediate files and convert these to reduceTasks
+	reduceTasks              *list.List
 
 	healthBeatsLock            sync.Mutex
 	healthBeatsForAssignedTask map[string]time.Time
@@ -89,6 +114,46 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 		}
 	}
 
+	if c.reduceTasks.Len() == 0 {
+		log.Printf("MapTasks already done, will assign ReduceTasks")
+		// group intermediate files and generate reduceTask that files have same reduce number
+		c.groupAndGenerateReduceTask()
+		c.logReduceTasks()
+	}
+
+	for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
+		task := elem.Value.(reduceTask)
+		// worker id conflict, please change worker id first
+		if args.Id == task.associatedWorkerId {
+			reply.Err = ErrConflictWorkerId
+			return nil
+		}
+
+		if task.status == freshTask {
+			// reply worker
+			reply.NReduce = c.nReduce
+			reply.TaskType = reduceTaskType
+			reply.IntermediateFilePathList = task.inputFilePathList
+			reply.NumOfReduceTask = task.numOfReduceTask
+
+			// set task
+			elem.Value = reduceTask{
+				numOfReduceTask:    task.numOfReduceTask,
+				inputFilePathList:  task.inputFilePathList,
+				associatedWorkerId: args.Id,
+				taskStartTime:      time.Now(),
+				taskEndTime:        time.Time{},
+				status:             assignedTask,
+				outputFile:         "",
+			}
+
+			c.healthBeatsLock.Lock()
+			c.healthBeatsForAssignedTask[args.Id] = time.Now()
+			c.healthBeatsLock.Unlock()
+			return nil
+		}
+	}
+
 	// no enough fresh task
 	reply.Err = ErrTaskNotReady
 	return nil
@@ -110,16 +175,12 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 				inputFilePath:      task.inputFilePath,
 				associatedWorkerId: task.associatedWorkerId,
 				taskStartTime:      task.taskStartTime,
+				taskEndTime:        time.Now(),
 				status:             finishedTask,
 			}
 
 			// add reduce task
-			c.reduceTasks.PushBack(reduceTask{
-				inputFilePathList:  args.IntermediateFilePathList,
-				associatedWorkerId: "",
-				taskStartTime:      time.Time{},
-				status:             freshTask,
-			})
+			c.intermediateFilePathList = append(c.intermediateFilePathList, args.IntermediateFilePathList...)
 
 			c.healthBeatsLock.Lock()
 			delete(c.healthBeatsForAssignedTask, args.Id)
@@ -134,10 +195,84 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 	return nil
 }
 
+func (c *Coordinator) ReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply) error {
+	log.Println("Coordinator get ReduceTask reply")
+	c.assignTaskLock.Lock()
+	defer c.assignTaskLock.Unlock()
+
+	for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
+		task := elem.Value.(reduceTask)
+		if task.associatedWorkerId == args.Id {
+			// reply worker
+			reply.Err = ""
+
+			// finish reduce task
+			elem.Value = reduceTask{
+				numOfReduceTask:    task.numOfReduceTask,
+				inputFilePathList:  task.inputFilePathList,
+				associatedWorkerId: task.associatedWorkerId,
+				taskStartTime:      task.taskStartTime,
+				taskEndTime:        task.taskEndTime,
+				status:             finishedTask,
+				outputFile:         args.OutputFile,
+			}
+
+			c.healthBeatsLock.Lock()
+			delete(c.healthBeatsForAssignedTask, args.Id)
+			c.healthBeatsLock.Unlock()
+			c.logReduceTasks()
+			return nil
+		}
+	}
+
+	reply.Err = "not found associated reduce task, maybe reassign to another worker"
+	c.logReduceTasks()
+	return nil
+}
+
+// intermediate file name pattern: mr-instanceId-workerId-numOfReduceTask
+func (c *Coordinator) groupAndGenerateReduceTask() {
+	reduceNumMap := make(map[string][]string)
+	for _, path := range c.intermediateFilePathList {
+		basePath := filepath.Base(path)
+		splitAry := strings.Split(basePath, "-")
+		numOfReduceTask := splitAry[3]
+
+		_, ok := reduceNumMap[numOfReduceTask]
+		if !ok {
+			reduceNumMap[numOfReduceTask] = make([]string, 0)
+			reduceNumMap[numOfReduceTask] = append(reduceNumMap[numOfReduceTask], path)
+		} else {
+			reduceNumMap[numOfReduceTask] = append(reduceNumMap[numOfReduceTask], path)
+		}
+	}
+
+	log.Printf("groupAndGenerateReduceTask: %v", reduceNumMap)
+
+	for key, val := range reduceNumMap {
+		c.reduceTasks.PushBack(reduceTask{
+			numOfReduceTask:    key,
+			inputFilePathList:  val,
+			associatedWorkerId: "",
+			taskStartTime:      time.Time{},
+			taskEndTime:        time.Time{},
+			status:             freshTask,
+			outputFile:         "",
+		})
+	}
+}
+
 func (c *Coordinator) logMapTasks() {
 	for front := c.mapTasks.Front(); front != nil; front = front.Next() {
 		task := front.Value.(mapTask)
 		log.Printf("Current MapTask:[%+v]", task)
+	}
+}
+
+func (c *Coordinator) logReduceTasks() {
+	for front := c.reduceTasks.Front(); front != nil; front = front.Next() {
+		task := front.Value.(reduceTask)
+		log.Printf("Current ReduceTask:[%+v]", task)
 	}
 }
 
@@ -149,6 +284,7 @@ func (c *Coordinator) HealthBeats(args *HealthBeatsArgs, reply *HealthBeatsReply
 	return nil
 }
 
+// goroutine
 func (c *Coordinator) evictUnhealthyAssignedWorker() {
 	for {
 		c.healthBeatsLock.Lock()
@@ -201,13 +337,14 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 				c.healthBeatsLock.Unlock()
 			}
 		}
+		c.logReduceTasks()
 		c.assignTaskLock.Unlock()
 
 		time.Sleep(CoordEvictUnhealthyWorkerTime)
 	}
 }
 
-//
+// goroutine
 // start a thread that listens for RPCs from worker.go
 //
 func (c *Coordinator) server() {
@@ -223,16 +360,29 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 }
 
-//
+// goroutine
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
+	c.assignTaskLock.Lock()
+	defer c.assignTaskLock.Unlock()
 
-	// Your code here.
+	if c.reduceTasks.Len() == 0 {
+		return false
+	}
 
-	return ret
+	outputFiles := make([]string, 0, c.reduceTasks.Len())
+	for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
+		task := elem.Value.(reduceTask)
+		if task.status != finishedTask {
+			return false
+		}
+		outputFiles = append(outputFiles, task.outputFile)
+	}
+
+	log.Printf("All tasks already done. Output files: [%v]", outputFiles)
+	return true
 }
 
 //
