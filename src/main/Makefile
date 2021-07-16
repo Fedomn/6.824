@@ -2,10 +2,8 @@ clean:
 	rm mr-* || true
 
 # lab 1
-wc:
+mrapps:
 	go build -race -buildmode=plugin ../mrapps/wc.go
-
-crash:
 	go build -race -buildmode=plugin ../mrapps/crash.go
 
 seqrun: wc

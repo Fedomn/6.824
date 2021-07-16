@@ -271,8 +271,9 @@ func (w *Worker) replyMapTask() error {
 		return err
 	}
 
-	if reply.Err != nil {
+	if reply.Err != "" {
 		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, reply.Err)
+		// 作为worker活已经干完了，并且也reply给了coord, 即使coord reply了err，worker需要看情况处理，这里选择性忽略
 	}
 	w.lock.Lock()
 	w.status = repliedWorker

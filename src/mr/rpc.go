@@ -9,10 +9,10 @@ import "strconv"
 const TaskRetryInterval = time.Second
 const TaskMaxRetryCount = 10
 const TaskHealthBeatsInterval = time.Second
-const TaskHealthBeatsMaxRetryCount = 5
-const TaskHealthBeatsMaxDelayTime = time.Second * 5
+const TaskHealthBeatsMaxRetryCount = 3
+const TaskHealthBeatsMaxDelayTime = time.Second * 3
 
-const CoordEvictUnhealthyWorkerTime = time.Second * 5
+const CoordEvictUnhealthyWorkerTime = time.Second * 3
 
 const RpcAskTask = "Coordinator.AskTask"
 const RpcMapTask = "Coordinator.MapTask"
@@ -62,7 +62,7 @@ type MapTaskArgs struct {
 }
 
 type MapTaskReply struct {
-	Err error
+	Err string
 }
 
 const (

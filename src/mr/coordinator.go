@@ -2,7 +2,6 @@ package mr
 
 import (
 	"container/list"
-	"errors"
 	"log"
 	"sync"
 	"time"
@@ -104,7 +103,7 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 		task := elem.Value.(mapTask)
 		if task.associatedWorkerId == args.Id {
 			// reply worker
-			reply.Err = nil
+			reply.Err = ""
 
 			// finish map task
 			elem.Value = mapTask{
@@ -130,7 +129,7 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 		}
 	}
 
-	reply.Err = errors.New("not found associated map task, maybe reassign to another worker")
+	reply.Err = "not found associated map task, maybe reassign to another worker"
 	c.logMapTasks()
 	return nil
 }
@@ -164,16 +163,46 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 			}
 		}
 
-		log.Printf("Current assignedWoker healthMap:[%v]", healthMap)
+		log.Printf("Evictor: current assignedWoker healthMap:[%v]", healthMap)
 		c.healthBeatsLock.Unlock()
 
 		// reset assigned task to fresh
 		c.assignTaskLock.Lock()
+		for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
+			task := elem.Value.(mapTask)
+			// TODO evict not work
+			if ok, assignedWorkerHealthy := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
+				elem.Value = mapTask{
+					inputFilePath:      task.inputFilePath,
+					associatedWorkerId: "",
+					taskStartTime:      time.Time{},
+					status:             freshTask,
+				}
+
+				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
+				c.healthBeatsLock.Lock()
+				delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
+				c.healthBeatsLock.Unlock()
+			}
+		}
+
+		for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
+			task := elem.Value.(reduceTask)
+			if ok, assignedWorkerHealthy := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
+				elem.Value = reduceTask{
+					inputFilePathList:  task.inputFilePathList,
+					associatedWorkerId: "",
+					taskStartTime:      time.Time{},
+					status:             freshTask,
+				}
+
+				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
+				c.healthBeatsLock.Lock()
+				delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
+				c.healthBeatsLock.Unlock()
+			}
+		}
 		c.assignTaskLock.Unlock()
-
-		// for map task
-
-		// for reduce task
 
 		time.Sleep(CoordEvictUnhealthyWorkerTime)
 	}
