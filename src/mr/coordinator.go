@@ -170,8 +170,7 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 		c.assignTaskLock.Lock()
 		for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 			task := elem.Value.(mapTask)
-			// TODO evict not work
-			if ok, assignedWorkerHealthy := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
+			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
 				elem.Value = mapTask{
 					inputFilePath:      task.inputFilePath,
 					associatedWorkerId: "",
@@ -188,7 +187,7 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 
 		for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
 			task := elem.Value.(reduceTask)
-			if ok, assignedWorkerHealthy := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
+			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
 				elem.Value = reduceTask{
 					inputFilePathList:  task.inputFilePathList,
 					associatedWorkerId: "",
