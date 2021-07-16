@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,7 +52,6 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 		// main logic
 		var err error
 		for i := true; i; i = false {
-			// TODO handle ErrTaskNotReady
 			if err = w.askTask(); err != nil {
 				break
 			}
@@ -81,14 +81,21 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 			continue
 		}
 
+		// handle task not ready situation, do nothing
+		if strings.Contains(err.Error(), ErrTaskNotReady) {
+			log.Printf("Worker:[%s] will retry after %s", w, TaskRetryInterval.String())
+			time.Sleep(TaskRetryInterval)
+			continue
+		}
+
 		// handle error cases
-		if w.retryCount >= TaskMaxRetryCount {
+		if w.errRetryCount >= TaskMaxRetryCount {
 			log.Printf("Worker:[%s] Retry times had exceed max, will stop worker", w)
 			return
 		}
 		log.Printf("Worker:[%s] will retry after %s", w, TaskRetryInterval.String())
 		time.Sleep(TaskRetryInterval)
-		w.retryCount++
+		w.errRetryCount++
 	}
 }
 
@@ -103,7 +110,8 @@ type Worker struct {
 	intermediateFilePathList []string // for map task outputs or reduce task inputs
 	outputFile               string   // for reduce task output
 
-	retryCount int // retry count
+	errRetryCount         int // error retry count
+	healthBeatsRetryCount int // health beats retry count
 
 	// for internal use
 	tmpFileMap map[int]*os.File // for intermediate temp file before os.rename, key is numOfReduceTask, value is filePointer
@@ -113,7 +121,7 @@ type Worker struct {
 }
 
 func (w *Worker) String() string {
-	return fmt.Sprintf("instance:%s id:%s taskType:%d nReduce:%d status:%d retryCount:%d", w.instance, w.id, w.taskType, w.nReduce, w.status, w.retryCount)
+	return fmt.Sprintf("instance:%s id:%s taskType:%d nReduce:%d status:%d errRetryCount:%d", w.instance, w.id, w.taskType, w.nReduce, w.status, w.errRetryCount)
 }
 
 func (w *Worker) askTask() error {
@@ -137,10 +145,9 @@ func (w *Worker) askTask() error {
 			w.lock.Lock()
 			w.id = newId()
 			w.lock.Unlock()
-		} else if err == ErrTaskNotReady {
-		} else {
-			return errors.New(err)
 		}
+
+		return errors.New(err)
 	}
 
 	w.lock.Lock()
@@ -282,7 +289,7 @@ func (w *Worker) reset() {
 	w.inputFile = ""
 	w.intermediateFilePathList = []string{}
 	w.outputFile = ""
-	w.retryCount = 0
+	w.errRetryCount = 0
 	w.tmpFileMap = make(map[int]*os.File)
 }
 
@@ -296,7 +303,7 @@ func newWorker() *Worker {
 		inputFile:                "",
 		intermediateFilePathList: []string{},
 		outputFile:               "",
-		retryCount:               0,
+		errRetryCount:            0,
 		tmpFileMap:               make(map[int]*os.File),
 	}
 }
@@ -345,10 +352,15 @@ func (w *Worker) healthBeats() {
 			Now: time.Now(),
 		}
 		if err := w.call(RpcHealthBeats, &args, nil); err != nil {
-			log.Printf("Worker:[%v] healthBeats err:[%v]", w, err)
+			log.Printf("Worker healthBeats err:[%v]", err)
+			w.healthBeatsRetryCount++
 		}
 
-		// TODO auto shutdown when coordinator not reply after many times
+		// handle error cases
+		if w.healthBeatsRetryCount >= TaskHealthBeatsMaxRetryCount {
+			log.Printf("Worker health beats retry times had exceed max, will stop worker")
+			os.Exit(1)
+		}
 
 		time.Sleep(TaskHealthBeatsInterval)
 	}

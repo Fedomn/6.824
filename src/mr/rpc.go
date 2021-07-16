@@ -9,6 +9,7 @@ import "strconv"
 const TaskRetryInterval = time.Second
 const TaskMaxRetryCount = 10
 const TaskHealthBeatsInterval = time.Second
+const TaskHealthBeatsMaxRetryCount = 5
 const TaskHealthBeatsMaxDelayTime = time.Second * 5
 
 const CoordEvictUnhealthyWorkerTime = time.Second * 5
