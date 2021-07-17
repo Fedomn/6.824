@@ -66,21 +66,22 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 				break
 			}
 
-			if w.taskType == mapTaskType {
+			switch w.taskType {
+			case mapTaskType:
 				if err = w.handleMapTask(mapf); err != nil {
 					break
 				}
 				if err = w.replyMapTask(); err != nil {
 					break
 				}
-			} else if w.taskType == reduceTaskType {
+			case reduceTaskType:
 				if err = w.handleReduceTask(reducef); err != nil {
 					break
 				}
 				if err = w.replyReduceTask(); err != nil {
 					break
 				}
-			} else {
+			default:
 				log.Printf("Worker:[%s] receive unrecognized taskType:[%v]", w, w.taskType)
 				err = errors.New("unrecognized taskType")
 				break
