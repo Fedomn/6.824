@@ -12,7 +12,9 @@ const TaskHealthBeatsInterval = time.Millisecond * 500
 const TaskHealthBeatsMaxRetryCount = 3
 const TaskHealthBeatsMaxDelayTime = time.Second * 5
 
-const CoordEvictUnhealthyWorkerTime = time.Second * 3
+// evict勤快点 以解决还未来及evict 但已经reply的mapTask，我们不去接收中间文件
+// 但是即使task没有及时evict，我们仍然可以通过文件名一致 来保证原子性
+const CoordEvictUnhealthyWorkerTime = time.Second * 1
 
 const RpcAskTask = "Coordinator.AskTask"
 const RpcMapTask = "Coordinator.MapTask"
@@ -50,6 +52,7 @@ type AskTaskReply struct {
 	NReduce                  int      // reduce task count
 	TaskType                 int      // task type
 	InputFile                string   // for map task input
+	NumOfMapTask             string   // for map task output filename
 	IntermediateFilePathList []string // for reduce task inputs
 	NumOfReduceTask          string   // for reduce task output filename
 

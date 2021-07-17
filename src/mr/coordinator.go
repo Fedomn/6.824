@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ const (
 )
 
 type mapTask struct {
+	numOfMapTask       string
 	inputFilePath      string
 	associatedWorkerId string
 	taskStartTime      time.Time
@@ -36,7 +38,8 @@ type mapTask struct {
 
 func (m mapTask) String() string {
 	return fmt.Sprintf(
-		"inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
+		"numOfMapTask:[%s] inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
+		m.numOfMapTask,
 		m.inputFilePath,
 		m.associatedWorkerId,
 		m.taskStartTime.Format("15:04:05"),
@@ -57,7 +60,8 @@ type reduceTask struct {
 
 func (m reduceTask) String() string {
 	return fmt.Sprintf(
-		"inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
+		"numOfReduceTask:[%s] inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
+		m.numOfReduceTask,
 		m.inputFilePathList,
 		m.associatedWorkerId,
 		m.taskStartTime.Format("15:04:05"),
@@ -100,9 +104,11 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 			reply.NReduce = c.nReduce
 			reply.TaskType = mapTaskType
 			reply.InputFile = task.inputFilePath
+			reply.NumOfMapTask = task.numOfMapTask
 
 			// set task
 			elem.Value = mapTask{
+				numOfMapTask:       task.numOfMapTask,
 				inputFilePath:      task.inputFilePath,
 				associatedWorkerId: args.Id,
 				taskStartTime:      time.Now(),
@@ -180,6 +186,7 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 
 			// finish map task
 			elem.Value = mapTask{
+				numOfMapTask:       task.numOfMapTask,
 				inputFilePath:      task.inputFilePath,
 				associatedWorkerId: task.associatedWorkerId,
 				taskStartTime:      task.taskStartTime,
@@ -244,7 +251,7 @@ func (c *Coordinator) groupAndGenerateReduceTask() {
 	for _, path := range c.intermediateFilePathList {
 		basePath := filepath.Base(path)
 		splitAry := strings.Split(basePath, "-")
-		numOfReduceTask := splitAry[3]
+		numOfReduceTask := splitAry[len(splitAry)-1]
 
 		_, ok := reduceNumMap[numOfReduceTask]
 		if !ok {
@@ -316,6 +323,7 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 			task := elem.Value.(mapTask)
 			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
 				elem.Value = mapTask{
+					numOfMapTask:       task.numOfMapTask,
 					inputFilePath:      task.inputFilePath,
 					associatedWorkerId: "",
 					taskStartTime:      time.Time{},
@@ -333,10 +341,13 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 			task := elem.Value.(reduceTask)
 			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
 				elem.Value = reduceTask{
+					numOfReduceTask:    task.numOfReduceTask,
 					inputFilePathList:  task.inputFilePathList,
 					associatedWorkerId: "",
 					taskStartTime:      time.Time{},
+					taskEndTime:        time.Time{},
 					status:             freshTask,
+					outputFile:         "",
 				}
 
 				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
@@ -408,8 +419,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		healthBeatsForAssignedTask: make(map[string]time.Time),
 	}
 
-	for _, filePath := range files {
+	for idx, filePath := range files {
 		c.mapTasks.PushBack(mapTask{
+			numOfMapTask:       strconv.Itoa(idx),
 			inputFilePath:      filePath,
 			associatedWorkerId: "",
 			taskStartTime:      time.Time{},

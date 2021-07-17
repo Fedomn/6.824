@@ -38,8 +38,20 @@ Challenges:
 
 ### Lab 1 总结
 
-Logging策略
+#### Atomicity 的保证
+
+- reassign的task，可能会被重复执行，即worker A被认为unhealthy后，仍然生成了file，接替A的worker B也会生成相同的file。
+  此时不论是谁最终写完数据，由于代码逻辑一样，因此数据文件也都是一样的。都可以通过os.rename来保证最终只存在一个文件
+- 中间文件 和 结果文件 名称的讲究：同一个task生成的文件名必须一致，为了保证多次执行task，只会有一个文件的原子性
+
+#### Logging策略
 
 - 在main logic主函数里，不打err的日志，只记录 成功或retry 日志
 - err的日志，在main logic调用的function里记录
 - main logic调用function A，A以下的function日志尽量避免，留给function A记录
+
+#### test-mr.sh在macOS上注意点
+
+- 没有timeout，需要brew install gtimeout
+- 提示wait: -n: invalid option，需要brew upgrade bash，之前默认的版本是version 3.2.57(1)-release
+

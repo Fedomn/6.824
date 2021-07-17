@@ -1,5 +1,5 @@
 clean:
-	rm mr-* || true
+	rm -rf mr-* || true
 
 # lab 1
 mrapps: clean
@@ -19,4 +19,4 @@ coord:
 	go run -race mrcoordinator.go ./pg*.txt
 
 worker:
-	go run -race mrworker.go ../mrapps/indexer.so
+	go run -race mrworker.go ../mrapps/early_exit.so

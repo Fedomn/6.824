@@ -124,6 +124,7 @@ type Worker struct {
 	nReduce  int
 
 	inputFile                string   // for map task input
+	numOfMapTask             string   // for map task output filename
 	intermediateFilePathList []string // for map task outputs or reduce task inputs
 	numOfReduceTask          string   // for reduce task output filename
 	outputFile               string   // for reduce task output
@@ -139,7 +140,9 @@ type Worker struct {
 }
 
 func (w *Worker) String() string {
-	return fmt.Sprintf("instance:%s id:%s taskType:%d nReduce:%d status:%d errRetryCount:%d", w.instance, w.id, w.taskType, w.nReduce, w.status, w.errRetryCount)
+	return fmt.Sprintf(
+		"instance:%s id:%s taskType:%d numOfMapTask:%s numOfReduceTask:%s nReduce:%d status:%d errRetryCount:%d",
+		w.instance, w.id, w.taskType, w.numOfMapTask, w.numOfReduceTask, w.nReduce, w.status, w.errRetryCount)
 }
 
 func (w *Worker) askTask() error {
@@ -172,6 +175,7 @@ func (w *Worker) askTask() error {
 	w.nReduce = reply.NReduce
 	w.taskType = reply.TaskType
 	w.inputFile = reply.InputFile
+	w.numOfMapTask = reply.NumOfMapTask
 	w.intermediateFilePathList = reply.IntermediateFilePathList
 	w.numOfReduceTask = reply.NumOfReduceTask
 
@@ -264,7 +268,7 @@ func (w *Worker) commitIntermediateFile() error {
 }
 
 func (w *Worker) intermediateFileName(numOfReduceTask int) string {
-	return fmt.Sprintf("mr-%s-%s-%d", w.instance, w.id, numOfReduceTask)
+	return fmt.Sprintf("mr-%s-%d", w.numOfMapTask, numOfReduceTask)
 }
 
 func (w *Worker) replyMapTask() error {
@@ -377,7 +381,7 @@ func (w *Worker) handleReduceTask(reducef func(string, []string) string) error {
 }
 
 func (w *Worker) outputFileName(numOfReduceTask string) string {
-	return fmt.Sprintf("mr-out-%s-%s-%s", w.instance, w.id, numOfReduceTask)
+	return fmt.Sprintf("mr-out-%s", numOfReduceTask)
 }
 
 func (w *Worker) replyReduceTask() error {
@@ -414,6 +418,7 @@ func (w *Worker) reset() {
 	w.nReduce = 0
 	w.inputFile = ""
 	w.intermediateFilePathList = []string{}
+	w.numOfReduceTask = ""
 	w.outputFile = ""
 	w.errRetryCount = 0
 	w.tmpFileMap = make(map[int]*os.File)
