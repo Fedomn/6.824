@@ -3,10 +3,16 @@ clean:
 
 # lab 1
 mrapps: clean
-	go build -race -buildmode=plugin ../mrapps/wc.go
-	go build -race -buildmode=plugin ../mrapps/crash.go
+	cd ../mrapps && go build --race -buildmode=plugin ./wc.go
+	cd ../mrapps && go build --race -buildmode=plugin ./indexer.go
+	cd ../mrapps && go build --race -buildmode=plugin ./mtiming.go
+	cd ../mrapps && go build --race -buildmode=plugin ./rtiming.go
+	cd ../mrapps && go build --race -buildmode=plugin ./jobcount.go
+	cd ../mrapps && go build --race -buildmode=plugin ./early_exit.go
+	cd ../mrapps && go build --race -buildmode=plugin ./crash.go
+	cd ../mrapps && go build --race -buildmode=plugin ./nocrash.go
 
-seqrun: mrapps
+seqrun:
 	go run -race mrsequential.go wc.so pg*.txt
 
 coord:

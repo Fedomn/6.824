@@ -348,7 +348,7 @@ func (w *Worker) handleReduceTask(reducef func(string, []string) string) error {
 		// 把上面遍历的所有值 copy 到values里
 		var values []string
 		for k := i; k < j; k++ {
-			values = append(values, intermediateKV[i].Value)
+			values = append(values, intermediateKV[k].Value)
 		}
 		output := reducef(intermediateKV[i].Key, values)
 
