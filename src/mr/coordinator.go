@@ -84,15 +84,43 @@ type reduceTask struct {
 	outputFile         string
 }
 
-func (m reduceTask) String() string {
+func newFreshReduceTask(numOfReduceTask string, inputFilePathList []string) reduceTask {
+	return reduceTask{
+		numOfReduceTask:   numOfReduceTask,
+		inputFilePathList: inputFilePathList,
+		status:            freshTask,
+	}
+}
+
+func (r *reduceTask) assignTo(workerId string) {
+	r.associatedWorkerId = workerId
+	r.taskStartTime = time.Now()
+	r.status = assignedTask
+}
+
+func (r *reduceTask) finish(outputFile string) {
+	r.taskEndTime = time.Now()
+	r.status = finishedTask
+	r.outputFile = outputFile
+}
+
+func (r *reduceTask) resetToFresh() {
+	r.associatedWorkerId = ""
+	r.taskStartTime = time.Time{}
+	r.taskEndTime = time.Time{}
+	r.status = freshTask
+	r.outputFile = ""
+}
+
+func (r reduceTask) String() string {
 	return fmt.Sprintf(
 		"numOfReduceTask:[%s] inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
-		m.numOfReduceTask,
-		m.inputFilePathList,
-		m.associatedWorkerId,
-		m.taskStartTime.Format("15:04:05"),
-		m.taskEndTime.Format("15:04:05"),
-		m.status,
+		r.numOfReduceTask,
+		r.inputFilePathList,
+		r.associatedWorkerId,
+		r.taskStartTime.Format("15:04:05"),
+		r.taskEndTime.Format("15:04:05"),
+		r.status,
 	)
 }
 
@@ -121,7 +149,21 @@ func (c *Coordinator) replyAssignedMapTaskToWorkerAndMarkHeartbeat(task mapTask,
 	reply.NumOfMapTask = task.numOfMapTask
 }
 
+func (c *Coordinator) replyAssignedReduceTaskToWorkerAndMarkHeartbeat(task reduceTask, reply *AskTaskReply) {
+	c.healthBeatsForAssignedTask[task.associatedWorkerId] = time.Now()
+
+	reply.NReduce = c.nReduce
+	reply.TaskType = reduceTaskType
+	reply.IntermediateFilePathList = task.inputFilePathList
+	reply.NumOfReduceTask = task.numOfReduceTask
+}
+
 func (c *Coordinator) replyFinishedMapTaskToWorkerAndDeleteHeartbeat(task mapTask, reply *MapTaskReply) {
+	delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
+	reply.Err = ""
+}
+
+func (c *Coordinator) replyFinishedReduceTaskToWorkerAndDeleteHeartbeat(task reduceTask, reply *ReduceTaskReply) {
 	delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
 	reply.Err = ""
 }
@@ -174,25 +216,13 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 		}
 
 		if task.status == freshTask {
-			// reply worker
-			reply.NReduce = c.nReduce
-			reply.TaskType = reduceTaskType
-			reply.IntermediateFilePathList = task.inputFilePathList
-			reply.NumOfReduceTask = task.numOfReduceTask
-
 			// set task
-			elem.Value = reduceTask{
-				numOfReduceTask:    task.numOfReduceTask,
-				inputFilePathList:  task.inputFilePathList,
-				associatedWorkerId: args.Id,
-				taskStartTime:      time.Now(),
-				taskEndTime:        time.Time{},
-				status:             assignedTask,
-				outputFile:         "",
-			}
+			task.assignTo(args.Id)
+			elem.Value = task
 
+			// reply worker
 			c.healthBeatsLock.Lock()
-			c.healthBeatsForAssignedTask[args.Id] = time.Now()
+			c.replyAssignedReduceTaskToWorkerAndMarkHeartbeat(task, reply)
 			c.healthBeatsLock.Unlock()
 			return nil
 		}
@@ -241,23 +271,15 @@ func (c *Coordinator) ReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply) e
 	for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
 		task := elem.Value.(reduceTask)
 		if task.associatedWorkerId == args.Id {
-			// reply worker
-			reply.Err = ""
-
 			// finish reduce task
-			elem.Value = reduceTask{
-				numOfReduceTask:    task.numOfReduceTask,
-				inputFilePathList:  task.inputFilePathList,
-				associatedWorkerId: task.associatedWorkerId,
-				taskStartTime:      task.taskStartTime,
-				taskEndTime:        task.taskEndTime,
-				status:             finishedTask,
-				outputFile:         args.OutputFile,
-			}
+			task.finish(args.OutputFile)
+			elem.Value = task
 
+			// reply worker
 			c.healthBeatsLock.Lock()
-			delete(c.healthBeatsForAssignedTask, args.Id)
+			c.replyFinishedReduceTaskToWorkerAndDeleteHeartbeat(task, reply)
 			c.healthBeatsLock.Unlock()
+
 			c.logReduceTasks()
 			return nil
 		}
@@ -302,15 +324,8 @@ func (c *Coordinator) groupAndGenerateReduceTask() {
 	log.Printf("groupAndGenerateReduceTask: %v", reduceNumMap)
 
 	for key, val := range reduceNumMap {
-		c.reduceTasks.PushBack(reduceTask{
-			numOfReduceTask:    key,
-			inputFilePathList:  val,
-			associatedWorkerId: "",
-			taskStartTime:      time.Time{},
-			taskEndTime:        time.Time{},
-			status:             freshTask,
-			outputFile:         "",
-		})
+		reduceTask := newFreshReduceTask(key, val)
+		c.reduceTasks.PushBack(reduceTask)
 	}
 }
 
@@ -372,15 +387,8 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 		for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
 			task := elem.Value.(reduceTask)
 			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
-				elem.Value = reduceTask{
-					numOfReduceTask:    task.numOfReduceTask,
-					inputFilePathList:  task.inputFilePathList,
-					associatedWorkerId: "",
-					taskStartTime:      time.Time{},
-					taskEndTime:        time.Time{},
-					status:             freshTask,
-					outputFile:         "",
-				}
+				task.resetToFresh()
+				elem.Value = task
 
 				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
 				c.healthBeatsLock.Lock()
