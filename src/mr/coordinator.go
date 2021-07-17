@@ -73,6 +73,7 @@ type Coordinator struct {
 	mapTasks                 *list.List
 	intermediateFilePathList []string // for storing map task intermediate files and convert these to reduceTasks
 	reduceTasks              *list.List
+	initReduceTasksOnce      sync.Once
 
 	healthBeatsLock            sync.Mutex
 	healthBeatsForAssignedTask map[string]time.Time
@@ -85,6 +86,7 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 	c.assignTaskLock.Lock()
 	defer c.assignTaskLock.Unlock()
 
+	finishedMapTasksCount := 0
 	for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 		task := elem.Value.(mapTask)
 		// worker id conflict, please change worker id first
@@ -112,13 +114,19 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 			c.healthBeatsLock.Unlock()
 			return nil
 		}
+
+		if task.status == finishedTask {
+			finishedMapTasksCount++
+		}
 	}
 
-	if c.reduceTasks.Len() == 0 {
-		log.Printf("MapTasks already done, will assign ReduceTasks")
-		// group intermediate files and generate reduceTask that files have same reduce number
-		c.groupAndGenerateReduceTask()
-		c.logReduceTasks()
+	if finishedMapTasksCount == c.nMap {
+		c.initReduceTasksOnce.Do(func() {
+			log.Printf("MapTasks already done, will assign ReduceTasks")
+			// group intermediate files and generate reduceTask that files have same reduce number
+			c.groupAndGenerateReduceTask()
+			c.logReduceTasks()
+		})
 	}
 
 	for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
