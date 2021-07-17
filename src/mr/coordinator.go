@@ -36,6 +36,32 @@ type mapTask struct {
 	status             taskStatus
 }
 
+func newFreshMapTask(numOfMapTask, inputFilePath string) mapTask {
+	return mapTask{
+		numOfMapTask:  numOfMapTask,
+		inputFilePath: inputFilePath,
+		status:        freshTask,
+	}
+}
+
+func (m *mapTask) assignTo(workerId string) {
+	m.associatedWorkerId = workerId
+	m.taskStartTime = time.Now()
+	m.status = assignedTask
+}
+
+func (m *mapTask) finish() {
+	m.taskEndTime = time.Now()
+	m.status = finishedTask
+}
+
+func (m *mapTask) resetToFresh() {
+	m.associatedWorkerId = ""
+	m.taskStartTime = time.Time{}
+	m.taskEndTime = time.Time{}
+	m.status = freshTask
+}
+
 func (m mapTask) String() string {
 	return fmt.Sprintf(
 		"numOfMapTask:[%s] inputFilePath:[%s] associatedWorkerId:[%s] taskTime:[%s~%s] status:[%d]",
@@ -86,6 +112,20 @@ type Coordinator struct {
 	nReduce int // reduce worker count
 }
 
+func (c *Coordinator) replyAssignedMapTaskToWorkerAndMarkHeartbeat(task mapTask, reply *AskTaskReply) {
+	c.healthBeatsForAssignedTask[task.associatedWorkerId] = time.Now()
+
+	reply.NReduce = c.nReduce
+	reply.TaskType = mapTaskType
+	reply.InputFile = task.inputFilePath
+	reply.NumOfMapTask = task.numOfMapTask
+}
+
+func (c *Coordinator) replyFinishedMapTaskToWorkerAndDeleteHeartbeat(task mapTask, reply *MapTaskReply) {
+	delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
+	reply.Err = ""
+}
+
 func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 	c.assignTaskLock.Lock()
 	defer c.assignTaskLock.Unlock()
@@ -100,23 +140,13 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 		}
 
 		if task.status == freshTask {
-			// reply worker
-			reply.NReduce = c.nReduce
-			reply.TaskType = mapTaskType
-			reply.InputFile = task.inputFilePath
-			reply.NumOfMapTask = task.numOfMapTask
+			// assign task to worker
+			task.assignTo(args.Id)
+			elem.Value = task
 
-			// set task
-			elem.Value = mapTask{
-				numOfMapTask:       task.numOfMapTask,
-				inputFilePath:      task.inputFilePath,
-				associatedWorkerId: args.Id,
-				taskStartTime:      time.Now(),
-				status:             assignedTask,
-			}
-
+			// reply worker and mark health beats time for eviction
 			c.healthBeatsLock.Lock()
-			c.healthBeatsForAssignedTask[args.Id] = time.Now()
+			c.replyAssignedMapTaskToWorkerAndMarkHeartbeat(task, reply)
 			c.healthBeatsLock.Unlock()
 			return nil
 		}
@@ -181,25 +211,18 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 	for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 		task := elem.Value.(mapTask)
 		if task.associatedWorkerId == args.Id {
-			// reply worker
-			reply.Err = ""
-
 			// finish map task
-			elem.Value = mapTask{
-				numOfMapTask:       task.numOfMapTask,
-				inputFilePath:      task.inputFilePath,
-				associatedWorkerId: task.associatedWorkerId,
-				taskStartTime:      task.taskStartTime,
-				taskEndTime:        time.Now(),
-				status:             finishedTask,
-			}
+			task.finish()
+			elem.Value = task
 
 			// add reduce task
 			c.intermediateFilePathList = append(c.intermediateFilePathList, args.IntermediateFilePathList...)
 
+			// reply worker
 			c.healthBeatsLock.Lock()
-			delete(c.healthBeatsForAssignedTask, args.Id)
+			c.replyFinishedMapTaskToWorkerAndDeleteHeartbeat(task, reply)
 			c.healthBeatsLock.Unlock()
+
 			c.logMapTasks()
 			return nil
 		}
@@ -336,13 +359,8 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 		for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 			task := elem.Value.(mapTask)
 			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
-				elem.Value = mapTask{
-					numOfMapTask:       task.numOfMapTask,
-					inputFilePath:      task.inputFilePath,
-					associatedWorkerId: "",
-					taskStartTime:      time.Time{},
-					status:             freshTask,
-				}
+				task.resetToFresh()
+				elem.Value = task
 
 				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
 				c.healthBeatsLock.Lock()
@@ -434,13 +452,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	for idx, filePath := range files {
-		c.mapTasks.PushBack(mapTask{
-			numOfMapTask:       strconv.Itoa(idx),
-			inputFilePath:      filePath,
-			associatedWorkerId: "",
-			taskStartTime:      time.Time{},
-			status:             freshTask,
-		})
+		mapTask := newFreshMapTask(strconv.Itoa(idx), filePath)
+		c.mapTasks.PushBack(mapTask)
 	}
 
 	c.server()
