@@ -462,6 +462,12 @@ func (w *Worker) call(rpcname string, args interface{}, reply interface{}) error
 	return nil
 }
 
+// health beats 的作用证明worker的instance还在，并不能证明 worker处理的task hang住了
+// 因为，它们所在不同的goroutine
+// 为了避免被coordinator错误的认为instance挂了，需要频繁保持心跳
+// 如果TaskHealthBeatsMaxDelayTime <= CoordEvictUnhealthyWorkerTime
+// 则可能会出现 edge case：worker instance hang了，超过maxDelayTime然后被被evict了
+// 猜测原因：evict的时间窗口 大于 beatsMaxDelay的时间窗口
 func (w *Worker) healthBeats() {
 	for {
 		w.lock.Lock()

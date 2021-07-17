@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# for debug
+rm -rf mr-debug
+mkdir mr-debug || exit 1
+
 #
 # basic map-reduce test
 #
@@ -94,6 +98,8 @@ then
 else
   echo '---' indexer output is not the same as mr-correct-indexer.txt
   echo '---' indexer test: FAIL
+  cp mr-indexer-all ../mr-debug/mr-indexer-all
+  cp mr-correct-indexer.txt ../mr-debug/mr-correct-indexer.txt
   failed_any=1
 fi
 
@@ -171,6 +177,7 @@ if [ "$NT" -ne "8" ]
 then
   echo '---' map jobs ran incorrect number of times "($NT != 8)"
   echo '---' job count test: FAIL
+  cp mr-out* ../mr-debug/jobcount
   failed_any=1
 else
   echo '---' job count test: PASS
@@ -216,6 +223,8 @@ then
 else
   echo '---' output changed after first worker exited
   echo '---' early exit test: FAIL
+  cp mr-wc-all-final ../mr-debug/mr-wc-all-final
+  cp mr-wc-all-initial ../mr-debug/mr-wc-all-initial
   failed_any=1
 fi
 rm -f mr-*
@@ -266,6 +275,8 @@ then
 else
   echo '---' crash output is not the same as mr-correct-crash.txt
   echo '---' crash test: FAIL
+  cp mr-crash-all ../mr-debug/mr-crash-all
+  cp mr-correct-crash.txt ../mr-debug/mr-correct-crash.txt
   failed_any=1
 fi
 
