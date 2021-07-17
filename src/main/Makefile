@@ -1,5 +1,8 @@
+default: clean
+
 clean:
 	rm -rf mr-* || true
+	rm res.log || true
 
 # lab 1
 mrapps: clean
@@ -20,3 +23,9 @@ coord:
 
 worker:
 	go run -race mrworker.go ../mrapps/early_exit.so
+
+test: clean
+	bash test-mr.sh > res.log
+
+testmany: clean
+	bash test-mr-many.sh 10 > res.log
