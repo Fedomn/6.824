@@ -55,7 +55,7 @@ func ihash(key string) int {
 func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	w := newWorker()
 
-	go w.healthBeats()
+	go w.heartbeat()
 
 	for {
 
@@ -129,8 +129,8 @@ type Worker struct {
 	numOfReduceTask          string   // for reduce task output filename
 	outputFile               string   // for reduce task output
 
-	errRetryCount         int // error retry count
-	healthBeatsRetryCount int // health beats retry count
+	errRetryCount       int // error retry count
+	heartbeatRetryCount int // heartbeat retry count
 
 	// for internal use
 	tmpFileMap map[int]*os.File // for intermediate temp file before os.rename, key is numOfReduceTask, value is filePointer
@@ -467,13 +467,13 @@ func (w *Worker) call(rpcname string, args interface{}, reply interface{}) error
 	return nil
 }
 
-// health beats 的作用证明worker的instance还在，并不能证明 worker处理的task hang住了
+// heartbeat 的作用证明worker的instance还在，并不能证明 worker处理的task hang住了
 // 因为，它们所在不同的goroutine
 // 为了避免被coordinator错误的认为instance挂了，需要频繁保持心跳
-// 如果TaskHealthBeatsMaxDelayTime <= CoordEvictUnhealthyWorkerTime
+// 如果 TaskHeartbeatMaxDelayTime <= CoordEvictUnhealthyWorkerTime
 // 则可能会出现 edge case：worker instance hang了，超过maxDelayTime然后被被evict了
 // 猜测原因：evict的时间窗口 大于 beatsMaxDelay的时间窗口
-func (w *Worker) healthBeats() {
+func (w *Worker) heartbeat() {
 	for {
 		w.lock.Lock()
 		workerStatus := w.status
@@ -481,24 +481,24 @@ func (w *Worker) healthBeats() {
 		w.lock.Unlock()
 
 		if workerStatus >= assignedWorker {
-			time.Sleep(TaskHealthBeatsInterval)
+			time.Sleep(TaskHeartbeatInterval)
 			continue
 		}
-		args := HealthBeatsArgs{
+		args := HeartbeatArgs{
 			Id:  workerId,
 			Now: time.Now(),
 		}
-		if err := w.call(RpcHealthBeats, &args, nil); err != nil {
-			log.Printf("Worker healthBeats err:[%v]", err)
-			w.healthBeatsRetryCount++
+		if err := w.call(RpcHeartbeat, &args, nil); err != nil {
+			log.Printf("Worker heartbeat err:[%v]", err)
+			w.heartbeatRetryCount++
 		}
 
 		// handle error cases
-		if w.healthBeatsRetryCount >= TaskHealthBeatsMaxRetryCount {
-			log.Printf("Worker health beats retry times had exceed max, will stop worker")
+		if w.heartbeatRetryCount >= TaskHeartbeatMaxRetryCount {
+			log.Printf("Worker heartbeat retry times had exceed max, will stop worker")
 			os.Exit(1)
 		}
 
-		time.Sleep(TaskHealthBeatsInterval)
+		time.Sleep(TaskHeartbeatInterval)
 	}
 }

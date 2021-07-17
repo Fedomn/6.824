@@ -8,9 +8,9 @@ import "strconv"
 
 const TaskRetryInterval = time.Second
 const TaskMaxRetryCount = 10
-const TaskHealthBeatsInterval = time.Millisecond * 500
-const TaskHealthBeatsMaxRetryCount = 3
-const TaskHealthBeatsMaxDelayTime = time.Second * 5
+const TaskHeartbeatInterval = time.Millisecond * 500
+const TaskHeartbeatMaxRetryCount = 3
+const TaskHeartbeatMaxDelayTime = time.Second * 5
 
 // evict勤快点 以解决还未来及evict 但已经reply的mapTask，我们不去接收中间文件
 // 但是即使task没有及时evict，我们仍然可以通过文件名一致 来保证原子性
@@ -19,7 +19,7 @@ const CoordEvictUnhealthyWorkerTime = time.Second * 1
 const RpcAskTask = "Coordinator.AskTask"
 const RpcMapTask = "Coordinator.MapTask"
 const RpcReduceTask = "Coordinator.ReduceTask"
-const RpcHealthBeats = "Coordinator.HealthBeats"
+const RpcHeartbeat = "Coordinator.Heartbeat"
 
 // task types
 const (
@@ -36,12 +36,12 @@ const (
 	lostWorker
 )
 
-type HealthBeatsArgs struct {
+type HeartbeatArgs struct {
 	Id  string
 	Now time.Time
 }
 
-type HealthBeatsReply struct{}
+type HeartbeatReply struct{}
 
 type AskTaskArgs struct {
 	Id string // ask worker identifier

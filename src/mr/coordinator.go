@@ -133,15 +133,15 @@ type Coordinator struct {
 	reduceTasks              *list.List
 	initReduceTasksOnce      sync.Once
 
-	healthBeatsLock            sync.Mutex
-	healthBeatsForAssignedTask map[string]time.Time
+	heartbeatLock            sync.Mutex
+	heartbeatForAssignedTask map[string]time.Time
 
 	nMap    int // map worker count
 	nReduce int // reduce worker count
 }
 
 func (c *Coordinator) replyAssignedMapTaskToWorkerAndMarkHeartbeat(task mapTask, reply *AskTaskReply) {
-	c.healthBeatsForAssignedTask[task.associatedWorkerId] = time.Now()
+	c.heartbeatForAssignedTask[task.associatedWorkerId] = time.Now()
 
 	reply.NReduce = c.nReduce
 	reply.TaskType = mapTaskType
@@ -150,7 +150,7 @@ func (c *Coordinator) replyAssignedMapTaskToWorkerAndMarkHeartbeat(task mapTask,
 }
 
 func (c *Coordinator) replyAssignedReduceTaskToWorkerAndMarkHeartbeat(task reduceTask, reply *AskTaskReply) {
-	c.healthBeatsForAssignedTask[task.associatedWorkerId] = time.Now()
+	c.heartbeatForAssignedTask[task.associatedWorkerId] = time.Now()
 
 	reply.NReduce = c.nReduce
 	reply.TaskType = reduceTaskType
@@ -159,12 +159,12 @@ func (c *Coordinator) replyAssignedReduceTaskToWorkerAndMarkHeartbeat(task reduc
 }
 
 func (c *Coordinator) replyFinishedMapTaskToWorkerAndDeleteHeartbeat(task mapTask, reply *MapTaskReply) {
-	delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
+	delete(c.heartbeatForAssignedTask, task.associatedWorkerId)
 	reply.Err = ""
 }
 
 func (c *Coordinator) replyFinishedReduceTaskToWorkerAndDeleteHeartbeat(task reduceTask, reply *ReduceTaskReply) {
-	delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
+	delete(c.heartbeatForAssignedTask, task.associatedWorkerId)
 	reply.Err = ""
 }
 
@@ -186,10 +186,10 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 			task.assignTo(args.Id)
 			elem.Value = task
 
-			// reply worker and mark health beats time for eviction
-			c.healthBeatsLock.Lock()
+			// reply worker and mark heartbeat time for eviction
+			c.heartbeatLock.Lock()
 			c.replyAssignedMapTaskToWorkerAndMarkHeartbeat(task, reply)
-			c.healthBeatsLock.Unlock()
+			c.heartbeatLock.Unlock()
 			return nil
 		}
 
@@ -221,9 +221,9 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 			elem.Value = task
 
 			// reply worker
-			c.healthBeatsLock.Lock()
+			c.heartbeatLock.Lock()
 			c.replyAssignedReduceTaskToWorkerAndMarkHeartbeat(task, reply)
-			c.healthBeatsLock.Unlock()
+			c.heartbeatLock.Unlock()
 			return nil
 		}
 	}
@@ -249,9 +249,9 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 			c.intermediateFilePathList = append(c.intermediateFilePathList, args.IntermediateFilePathList...)
 
 			// reply worker
-			c.healthBeatsLock.Lock()
+			c.heartbeatLock.Lock()
 			c.replyFinishedMapTaskToWorkerAndDeleteHeartbeat(task, reply)
-			c.healthBeatsLock.Unlock()
+			c.heartbeatLock.Unlock()
 
 			c.logMapTasks()
 			return nil
@@ -276,9 +276,9 @@ func (c *Coordinator) ReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply) e
 			elem.Value = task
 
 			// reply worker
-			c.healthBeatsLock.Lock()
+			c.heartbeatLock.Lock()
 			c.replyFinishedReduceTaskToWorkerAndDeleteHeartbeat(task, reply)
-			c.healthBeatsLock.Unlock()
+			c.heartbeatLock.Unlock()
 
 			c.logReduceTasks()
 			return nil
@@ -343,22 +343,22 @@ func (c *Coordinator) logReduceTasks() {
 	}
 }
 
-func (c *Coordinator) HealthBeats(args *HealthBeatsArgs, reply *HealthBeatsReply) error {
-	c.healthBeatsLock.Lock()
-	defer c.healthBeatsLock.Unlock()
+func (c *Coordinator) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) error {
+	c.heartbeatLock.Lock()
+	defer c.heartbeatLock.Unlock()
 
-	c.healthBeatsForAssignedTask[args.Id] = args.Now
+	c.heartbeatForAssignedTask[args.Id] = args.Now
 	return nil
 }
 
 // goroutine
 func (c *Coordinator) evictUnhealthyAssignedWorker() {
 	for {
-		c.healthBeatsLock.Lock()
+		c.heartbeatLock.Lock()
 
 		healthMap := make(map[string]bool)
-		for workerId, workerLastHealthTime := range c.healthBeatsForAssignedTask {
-			workerCanMaxDelayTime := workerLastHealthTime.Add(TaskHealthBeatsMaxDelayTime)
+		for workerId, workerLastHealthTime := range c.heartbeatForAssignedTask {
+			workerCanMaxDelayTime := workerLastHealthTime.Add(TaskHeartbeatMaxDelayTime)
 			if time.Now().After(workerCanMaxDelayTime) {
 				healthMap[workerId] = false
 			} else {
@@ -367,7 +367,7 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 		}
 
 		log.Printf("Evictor: current assignedWoker healthMap:[%v]", healthMap)
-		c.healthBeatsLock.Unlock()
+		c.heartbeatLock.Unlock()
 
 		// reset assigned task to fresh
 		c.assignTaskLock.Lock()
@@ -378,9 +378,9 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 				elem.Value = task
 
 				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
-				c.healthBeatsLock.Lock()
-				delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
-				c.healthBeatsLock.Unlock()
+				c.heartbeatLock.Lock()
+				delete(c.heartbeatForAssignedTask, task.associatedWorkerId)
+				c.heartbeatLock.Unlock()
 			}
 		}
 
@@ -391,9 +391,9 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 				elem.Value = task
 
 				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
-				c.healthBeatsLock.Lock()
-				delete(c.healthBeatsForAssignedTask, task.associatedWorkerId)
-				c.healthBeatsLock.Unlock()
+				c.heartbeatLock.Lock()
+				delete(c.heartbeatForAssignedTask, task.associatedWorkerId)
+				c.heartbeatLock.Unlock()
 			}
 		}
 		c.logReduceTasks()
@@ -451,12 +451,12 @@ func (c *Coordinator) Done() bool {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		filePathList:               files,
-		nMap:                       len(files),
-		nReduce:                    nReduce,
-		mapTasks:                   list.New(),
-		reduceTasks:                list.New(),
-		healthBeatsForAssignedTask: make(map[string]time.Time),
+		filePathList:             files,
+		nMap:                     len(files),
+		nReduce:                  nReduce,
+		mapTasks:                 list.New(),
+		reduceTasks:              list.New(),
+		heartbeatForAssignedTask: make(map[string]time.Time),
 	}
 
 	for idx, filePath := range files {
