@@ -10,7 +10,7 @@ seqrun: mrapps
 	go run -race mrsequential.go wc.so pg*.txt
 
 coord:
-	go run -race mrcoordinator.go pg-*.txt
+	go run -race mrcoordinator.go ./pg*.txt
 
 worker:
-	go run -race mrworker.go wc.so
+	go run -race mrworker.go ../mrapps/indexer.so

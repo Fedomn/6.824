@@ -195,7 +195,7 @@ func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 		return err
 	}
 
-	kva := mapf(filepath.Base(filePath), string(content))
+	kva := mapf(filePath, string(content))
 
 	// write intermediate files
 	for _, entry := range kva {
