@@ -6,6 +6,8 @@ import (
 )
 import "strconv"
 
+const PORT = 3333
+
 const TaskRetryInterval = time.Second
 const TaskMaxRetryCount = 10
 const TaskHeartbeatInterval = time.Millisecond * 500
@@ -22,62 +24,62 @@ const RpcReduceTask = "Coordinator.ReduceTask"
 const RpcHeartbeat = "Coordinator.Heartbeat"
 
 // task types
-const (
-	mapTaskType = iota + 1
-	reduceTaskType
-)
+//const (
+//	mapTaskType = iota + 1
+//	reduceTaskType
+//)
 
 // worker status for state machine
-const (
-	idleWorker = iota + 1
-	assignedWorker
-	workedWorker
-	repliedWorker
-	lostWorker
-)
+//const (
+//	idleWorker = iota + 1
+//	assignedWorker
+//	workedWorker
+//	repliedWorker
+//	lostWorker
+//)
 
-type HeartbeatArgs struct {
-	Id  string
-	Now time.Time
-}
-
-type HeartbeatReply struct{}
-
-type AskTaskArgs struct {
-	Id string // ask worker identifier
-}
-
-type AskTaskReply struct {
-	// for normal flow
-	NReduce                  int      // reduce task count
-	TaskType                 int      // task type
-	InputFile                string   // for map task input
-	NumOfMapTask             string   // for map task output filename
-	IntermediateFilePathList []string // for reduce task inputs
-	NumOfReduceTask          string   // for reduce task output filename
-
-	Err string
-}
+//type HeartbeatArgs struct {
+//	Id  string
+//	Now time.Time
+//}
+//
+//type HeartbeatReply struct{}
+//
+//type AskTaskArgs struct {
+//	Id string // ask worker identifier
+//}
+//
+//type AskTaskReply struct {
+//	// for normal flow
+//	NReduce                  int      // reduce task count
+//	TaskType                 int      // task type
+//	InputFile                string   // for map task input
+//	NumOfMapTask             string   // for map task output filename
+//	IntermediateFilePathList []string // for reduce task inputs
+//	NumOfReduceTask          string   // for reduce task output filename
+//
+//	Err string
+//}
 
 // worker肯定是完成了mapTask，否则怎么有脸reply呢，肯定是继续重复处理task
-type MapTaskArgs struct {
-	Id string // worker identifier
-
-	IntermediateFilePathList []string
-}
-
-type MapTaskReply struct {
-	Err string
-}
-
-type ReduceTaskArgs struct {
-	Id         string // worker identifier
-	OutputFile string
-}
-
-type ReduceTaskReply struct {
-	Err string
-}
+//type MapTaskArgs struct {
+//	Id string // worker identifier
+//
+//	IntermediateFilePathList []string
+//}
+//
+//type MapTaskReply struct {
+//	Err string
+//}
+//
+//type ReduceTaskArgs struct {
+//	Id         string // worker identifier
+//	OutputFile string
+//}
+//
+//type ReduceTaskReply struct {
+//	Err string
+//}
 
 const (
 	ErrTaskNotReady     = "task not ready, please retry"

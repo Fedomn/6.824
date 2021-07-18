@@ -2,7 +2,9 @@ package mr
 
 import (
 	"container/list"
+	"context"
 	"fmt"
+	"google.golang.org/grpc"
 	"log"
 	"path/filepath"
 	"strconv"
@@ -11,9 +13,6 @@ import (
 	"time"
 )
 import "net"
-import "os"
-import "net/rpc"
-import "net/http"
 
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
@@ -136,15 +135,15 @@ type Coordinator struct {
 	heartbeatLock            sync.Mutex
 	heartbeatForAssignedTask map[string]time.Time
 
-	nMap    int // map worker count
-	nReduce int // reduce worker count
+	nMap    int   // map worker count
+	nReduce int32 // reduce worker count
 }
 
 func (c *Coordinator) replyAssignedMapTaskToWorkerAndMarkHeartbeat(task mapTask, reply *AskTaskReply) {
 	c.heartbeatForAssignedTask[task.associatedWorkerId] = time.Now()
 
 	reply.NReduce = c.nReduce
-	reply.TaskType = mapTaskType
+	reply.TaskType = TaskType_mapTaskType
 	reply.InputFile = task.inputFilePath
 	reply.NumOfMapTask = task.numOfMapTask
 }
@@ -153,7 +152,7 @@ func (c *Coordinator) replyAssignedReduceTaskToWorkerAndMarkHeartbeat(task reduc
 	c.heartbeatForAssignedTask[task.associatedWorkerId] = time.Now()
 
 	reply.NReduce = c.nReduce
-	reply.TaskType = reduceTaskType
+	reply.TaskType = TaskType_reduceTaskType
 	reply.IntermediateFilePathList = task.inputFilePathList
 	reply.NumOfReduceTask = task.numOfReduceTask
 }
@@ -168,17 +167,18 @@ func (c *Coordinator) replyFinishedReduceTaskToWorkerAndDeleteHeartbeat(task red
 	reply.Err = ""
 }
 
-func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
+func (c *Coordinator) AskTask(ctx context.Context, args *AskTaskArgs) (*AskTaskReply, error) {
 	c.assignTaskLock.Lock()
 	defer c.assignTaskLock.Unlock()
 
+	reply := &AskTaskReply{}
 	finishedMapTasksCount := 0
 	for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 		task := elem.Value.(mapTask)
 		// worker id conflict, please change worker id first
 		if args.Id == task.associatedWorkerId {
 			reply.Err = ErrConflictWorkerId
-			return nil
+			return reply, nil
 		}
 
 		if task.status == freshTask {
@@ -190,7 +190,7 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 			c.heartbeatLock.Lock()
 			c.replyAssignedMapTaskToWorkerAndMarkHeartbeat(task, reply)
 			c.heartbeatLock.Unlock()
-			return nil
+			return reply, nil
 		}
 
 		if task.status == finishedTask {
@@ -212,7 +212,7 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 		// worker id conflict, please change worker id first
 		if args.Id == task.associatedWorkerId {
 			reply.Err = ErrConflictWorkerId
-			return nil
+			return reply, nil
 		}
 
 		if task.status == freshTask {
@@ -224,20 +224,21 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 			c.heartbeatLock.Lock()
 			c.replyAssignedReduceTaskToWorkerAndMarkHeartbeat(task, reply)
 			c.heartbeatLock.Unlock()
-			return nil
+			return reply, nil
 		}
 	}
 
 	// no enough fresh task
 	reply.Err = ErrTaskNotReady
-	return nil
+	return reply, nil
 }
 
-func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
+func (c *Coordinator) MapTask(ctx context.Context, args *MapTaskArgs) (*MapTaskReply, error) {
 	log.Println("Coordinator get MapTask reply")
 	c.assignTaskLock.Lock()
 	defer c.assignTaskLock.Unlock()
 
+	reply := &MapTaskReply{}
 	for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 		task := elem.Value.(mapTask)
 		if task.associatedWorkerId == args.Id {
@@ -254,20 +255,21 @@ func (c *Coordinator) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 			c.heartbeatLock.Unlock()
 
 			c.logMapTasks()
-			return nil
+			return reply, nil
 		}
 	}
 
 	reply.Err = "not found associated map task, maybe reassign to another worker"
 	c.logMapTasks()
-	return nil
+	return reply, nil
 }
 
-func (c *Coordinator) ReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply) error {
+func (c *Coordinator) ReduceTask(ctx context.Context, args *ReduceTaskArgs) (*ReduceTaskReply, error) {
 	log.Println("Coordinator get ReduceTask reply")
 	c.assignTaskLock.Lock()
 	defer c.assignTaskLock.Unlock()
 
+	reply := &ReduceTaskReply{}
 	for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
 		task := elem.Value.(reduceTask)
 		if task.associatedWorkerId == args.Id {
@@ -281,13 +283,13 @@ func (c *Coordinator) ReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply) e
 			c.heartbeatLock.Unlock()
 
 			c.logReduceTasks()
-			return nil
+			return reply, nil
 		}
 	}
 
 	reply.Err = "not found associated reduce task, maybe reassign to another worker"
 	c.logReduceTasks()
-	return nil
+	return reply, nil
 }
 
 // intermediate file name pattern: mr-instanceId-workerId-numOfReduceTask
@@ -343,12 +345,12 @@ func (c *Coordinator) logReduceTasks() {
 	}
 }
 
-func (c *Coordinator) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) error {
+func (c *Coordinator) Heartbeat(ctx context.Context, args *HeartbeatArgs) (*HeartbeatReply, error) {
 	c.heartbeatLock.Lock()
 	defer c.heartbeatLock.Unlock()
 
-	c.heartbeatForAssignedTask[args.Id] = args.Now
-	return nil
+	c.heartbeatForAssignedTask[args.Id] = args.Now.AsTime()
+	return &HeartbeatReply{}, nil
 }
 
 // goroutine
@@ -407,16 +409,13 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 // start a thread that listens for RPCs from worker.go
 //
 func (c *Coordinator) server() {
-	rpc.Register(c)
-	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
-	sockname := coordinatorSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
+	l, e := net.Listen("tpc", fmt.Sprintf(":%d", PORT))
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	go http.Serve(l, nil)
+	grpcServer := grpc.NewServer()
+	RegisterMapReduceServer(grpcServer, c)
+	go grpcServer.Serve(l)
 }
 
 // goroutine
@@ -449,7 +448,7 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 //
-func MakeCoordinator(files []string, nReduce int) *Coordinator {
+func MakeCoordinator(files []string, nReduce int32) *Coordinator {
 	c := Coordinator{
 		filePathList:             files,
 		nMap:                     len(files),

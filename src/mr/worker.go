@@ -2,9 +2,12 @@ package mr
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -16,7 +19,6 @@ import (
 	"sync"
 	"time"
 )
-import "net/rpc"
 import "hash/fnv"
 
 func init() {
@@ -67,14 +69,14 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 			}
 
 			switch w.taskType {
-			case mapTaskType:
+			case TaskType_mapTaskType:
 				if err = w.handleMapTask(mapf); err != nil {
 					break
 				}
 				if err = w.replyMapTask(); err != nil {
 					break
 				}
-			case reduceTaskType:
+			case TaskType_reduceTaskType:
 				if err = w.handleReduceTask(reducef); err != nil {
 					break
 				}
@@ -120,9 +122,9 @@ func NewWorker(mapf func(string, string) []KeyValue, reducef func(string, []stri
 type Worker struct {
 	instance string // for host instance distinguish
 	id       string // for task level distinguish
-	taskType int
-	status   int
-	nReduce  int
+	taskType TaskType
+	status   WorkerStatus
+	nReduce  int32
 
 	inputFile                string   // for map task input
 	numOfMapTask             string   // for map task output filename
@@ -148,7 +150,7 @@ func (w *Worker) String() string {
 
 func (w *Worker) askTask() error {
 	// already assigned task
-	if w.status >= assignedWorker {
+	if w.status >= WorkerStatus_assignedWorker {
 		return nil
 	}
 
@@ -156,7 +158,7 @@ func (w *Worker) askTask() error {
 	reply := AskTaskReply{}
 
 	// send the RPC request, wait for the reply.
-	if err := w.call(RpcAskTask, &args, &reply); err != nil {
+	if err := w.AskTask(&args, &reply); err != nil {
 		log.Printf("Worker:[%s] askTask err:[%v]", w, err)
 		return err
 	}
@@ -180,7 +182,7 @@ func (w *Worker) askTask() error {
 	w.intermediateFilePathList = reply.IntermediateFilePathList
 	w.numOfReduceTask = reply.NumOfReduceTask
 
-	w.status = assignedWorker
+	w.status = WorkerStatus_assignedWorker
 	w.lock.Unlock()
 	log.Printf("Worker:[%s] askTask done", w)
 	return nil
@@ -189,7 +191,7 @@ func (w *Worker) askTask() error {
 /** for map task  **/
 func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 	// already worked task
-	if w.status >= workedWorker {
+	if w.status >= WorkerStatus_workedWorker {
 		return nil
 	}
 
@@ -224,14 +226,14 @@ func (w *Worker) handleMapTask(mapf func(string, string) []KeyValue) error {
 	//log.Printf("Worker:[%s] commit intermediate success!", w)
 
 	w.lock.Lock()
-	w.status = workedWorker
+	w.status = WorkerStatus_workedWorker
 	w.lock.Unlock()
 	log.Printf("Worker:[%s] handleMapTask done", w)
 	return nil
 }
 
 func (w *Worker) getIntermediateTempFile(key string) (*os.File, error) {
-	numOfReduceTask := ihash(key) % w.nReduce
+	numOfReduceTask := ihash(key) % int(w.nReduce)
 	if file, ok := w.tmpFileMap[numOfReduceTask]; ok {
 		return file, nil
 	}
@@ -274,7 +276,7 @@ func (w *Worker) intermediateFileName(numOfReduceTask int) string {
 
 func (w *Worker) replyMapTask() error {
 	// already replied
-	if w.status >= repliedWorker {
+	if w.status >= WorkerStatus_repliedWorker {
 		return nil
 	}
 
@@ -284,7 +286,7 @@ func (w *Worker) replyMapTask() error {
 	}
 
 	reply := MapTaskReply{}
-	if err := w.call(RpcMapTask, &args, &reply); err != nil {
+	if err := w.MapTask(&args, &reply); err != nil {
 		log.Printf("Worker:[%s] replyMapTask err:[%v]", w, err)
 		return err
 	}
@@ -294,7 +296,7 @@ func (w *Worker) replyMapTask() error {
 		// 作为worker活已经干完了，并且也reply给了coord, 即使coord reply了err，worker需要看情况处理，这里选择性忽略
 	}
 	w.lock.Lock()
-	w.status = repliedWorker
+	w.status = WorkerStatus_repliedWorker
 	w.lock.Unlock()
 	log.Printf("Worker:[%s] replyMapTask done", w)
 	return nil
@@ -303,7 +305,7 @@ func (w *Worker) replyMapTask() error {
 /** for reduce task  **/
 func (w *Worker) handleReduceTask(reducef func(string, []string) string) error {
 	// already worked task
-	if w.status >= workedWorker {
+	if w.status >= WorkerStatus_workedWorker {
 		return nil
 	}
 
@@ -375,7 +377,7 @@ func (w *Worker) handleReduceTask(reducef func(string, []string) string) error {
 	w.outputFile = outputFilePath
 
 	w.lock.Lock()
-	w.status = workedWorker
+	w.status = WorkerStatus_workedWorker
 	w.lock.Unlock()
 	log.Printf("Worker:[%s] handleReduceTask done", w)
 	return nil
@@ -387,7 +389,7 @@ func (w *Worker) outputFileName(numOfReduceTask string) string {
 
 func (w *Worker) replyReduceTask() error {
 	// already replied
-	if w.status >= repliedWorker {
+	if w.status >= WorkerStatus_repliedWorker {
 		return nil
 	}
 
@@ -396,7 +398,7 @@ func (w *Worker) replyReduceTask() error {
 		OutputFile: w.outputFile,
 	}
 	reply := ReduceTaskReply{}
-	if err := w.call(RpcReduceTask, &args, &reply); err != nil {
+	if err := w.ReduceTask(&args, &reply); err != nil {
 		log.Printf("Worker:[%s] replyReduceTask err:[%v]", w, err)
 		return err
 	}
@@ -406,7 +408,7 @@ func (w *Worker) replyReduceTask() error {
 	}
 
 	w.lock.Lock()
-	w.status = repliedWorker
+	w.status = WorkerStatus_repliedWorker
 	w.lock.Unlock()
 	log.Printf("Worker:[%s] replyReduceTask done", w)
 	return nil
@@ -415,7 +417,7 @@ func (w *Worker) replyReduceTask() error {
 func (w *Worker) reset() {
 	w.id = newId()
 	w.taskType = 0
-	w.status = idleWorker
+	w.status = WorkerStatus_idleWorker
 	w.nReduce = 0
 	w.inputFile = ""
 	w.intermediateFilePathList = []string{}
@@ -430,7 +432,7 @@ func newWorker() *Worker {
 		instance:                 newId(),
 		id:                       newId(),
 		taskType:                 0,
-		status:                   idleWorker,
+		status:                   WorkerStatus_idleWorker,
 		nReduce:                  0,
 		inputFile:                "",
 		intermediateFilePathList: []string{},
@@ -445,26 +447,86 @@ func newId() string {
 	return strconv.Itoa(rand.Intn(100))
 }
 
-//
-// send an RPC request to the coordinator, wait for the response.
-// usually returns true.
-// returns false if something goes wrong.
-//
-func (w *Worker) call(rpcname string, args interface{}, reply interface{}) error {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
+func (w *Worker) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
+	conn, err := grpc.Dial(fmt.Sprintf(":%d", PORT), grpc.WithInsecure())
 	if err != nil {
 		//log.Printf("Worker:[%v] dialing err:[%v]", w, err)
 		return err
 	}
-	defer c.Close()
-
-	if err = c.Call(rpcname, args, reply); err != nil {
+	defer conn.Close()
+	client := NewMapReduceClient(conn)
+	task, err := client.AskTask(context.Background(), args)
+	if err != nil {
 		//log.Printf("Worker:[%v], call err:[%v]", w, err)
 		return err
 	}
 
+	// TODO
+	reply.Err = task.Err
+	reply.NReduce = task.NReduce
+	reply.TaskType = task.TaskType
+	reply.InputFile = task.InputFile
+	reply.NumOfMapTask = task.NumOfMapTask
+	reply.IntermediateFilePathList = task.IntermediateFilePathList
+	reply.NumOfReduceTask = task.NumOfReduceTask
+
+	return nil
+}
+
+func (w *Worker) MapTask(args *MapTaskArgs, reply *MapTaskReply) error {
+	conn, err := grpc.Dial(fmt.Sprintf(":%d", PORT), grpc.WithInsecure())
+	if err != nil {
+		//log.Printf("Worker:[%v] dialing err:[%v]", w, err)
+		return err
+	}
+	defer conn.Close()
+	client := NewMapReduceClient(conn)
+	task, err := client.MapTask(context.Background(), args)
+	if err != nil {
+		//log.Printf("Worker:[%v], call err:[%v]", w, err)
+		return err
+	}
+
+	// TODO
+	reply.Err = task.Err
+	return nil
+}
+
+func (w *Worker) ReduceTask(args *ReduceTaskArgs, reply *ReduceTaskReply) error {
+	conn, err := grpc.Dial(fmt.Sprintf(":%d", PORT), grpc.WithInsecure())
+	if err != nil {
+		//log.Printf("Worker:[%v] dialing err:[%v]", w, err)
+		return err
+	}
+	defer conn.Close()
+	client := NewMapReduceClient(conn)
+	task, err := client.ReduceTask(context.Background(), args)
+	if err != nil {
+		//log.Printf("Worker:[%v], call err:[%v]", w, err)
+		return err
+	}
+
+	// TODO
+	reply.Err = task.Err
+	return nil
+}
+
+func (w *Worker) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) error {
+	conn, err := grpc.Dial(fmt.Sprintf(":%d", PORT), grpc.WithInsecure())
+	if err != nil {
+		//log.Printf("Worker:[%v] dialing err:[%v]", w, err)
+		return err
+	}
+	defer conn.Close()
+	client := NewMapReduceClient(conn)
+	heartbeatReply, err := client.Heartbeat(context.Background(), args)
+	if err != nil {
+		//log.Printf("Worker:[%v], call err:[%v]", w, err)
+		return err
+	}
+
+	// TODO
+	reply = heartbeatReply
 	return nil
 }
 
@@ -481,15 +543,15 @@ func (w *Worker) heartbeat() {
 		workerId := w.id
 		w.lock.Unlock()
 
-		if workerStatus >= assignedWorker {
+		if workerStatus >= WorkerStatus_assignedWorker {
 			time.Sleep(TaskHeartbeatInterval)
 			continue
 		}
 		args := HeartbeatArgs{
 			Id:  workerId,
-			Now: time.Now(),
+			Now: timestamppb.Now(),
 		}
-		if err := w.call(RpcHeartbeat, &args, nil); err != nil {
+		if err := w.Heartbeat(&args, nil); err != nil {
 			log.Printf("Worker heartbeat err:[%v]", err)
 			w.heartbeatRetryCount++
 		}

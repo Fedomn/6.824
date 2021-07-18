@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "./;mr";
+
+package mr.proto;
+
+enum TaskType {
+  mapTaskType = 0;
+  reduceTaskType = 1;
+}
+
+enum WorkerStatus {
+  idleWorker = 0;
+  assignedWorker = 1;
+  workedWorker = 2;
+  repliedWorker = 3;
+}
+
+service MapReduce {
+  rpc AskTask (AskTaskArgs) returns (AskTaskReply) {}
+  rpc MapTask (MapTaskArgs) returns (MapTaskReply) {}
+  rpc ReduceTask (ReduceTaskArgs) returns (ReduceTaskReply) {}
+  rpc Heartbeat (HeartbeatArgs) returns (HeartbeatReply) {}
+}
+
+message AskTaskArgs {
+  string Id = 1;
+}
+
+message AskTaskReply {
+  int32 NReduce = 1;
+  TaskType TaskType = 2;
+  string InputFile = 3;
+  string NumOfMapTask = 4;
+  repeated string IntermediateFilePathList = 5;
+  string NumOfReduceTask = 6;
+  string Err = 7;
+}
+
+message MapTaskArgs {
+  string Id = 1;
+  repeated string IntermediateFilePathList = 2;
+}
+
+message MapTaskReply {
+  string Err = 1;
+}
+
+message ReduceTaskArgs {
+  string Id = 1;
+  string OutputFile = 2;
+}
+
+message ReduceTaskReply {
+  string Err = 1;
+}
+
+message HeartbeatArgs {
+  string Id = 1;
+  google.protobuf.Timestamp Now = 2;
+}
+
+message HeartbeatReply {}
