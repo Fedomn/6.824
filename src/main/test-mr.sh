@@ -244,22 +244,29 @@ sleep 1
 # start multiple workers
 timeout -k 2s 180s ../mrworker ../../mrapps/crash.so &
 
+# RPC port define in rpc.go
+PORT=3333
+
 # mimic rpc.go's coordinatorSock()
-SOCKNAME=/var/tmp/824-mr-`id -u`
+#SOCKNAME=/var/tmp/824-mr-`id -u`
 
-( while [ -e $SOCKNAME -a ! -f mr-done ]
+# SOCKNAME 存在 + mr-done 不存在 => while条件一直为true
+# ( while [ -e $SOCKNAME -a ! -f mr-done ]
+# refer https://devhints.io/bash
+
+( while [[ -n $(lsof -i:$PORT) && ! -e mr-done ]]
   do
     timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
     sleep 1
   done ) &
 
-( while [ -e $SOCKNAME -a ! -f mr-done ]
+( while [[ -n $(lsof -i:$PORT) && ! -e mr-done ]]
   do
     timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
     sleep 1
   done ) &
 
-while [ -e $SOCKNAME -a ! -f mr-done ]
+while [[ -n $(lsof -i:$PORT) && ! -e mr-done ]]
 do
   timeout -k 2s 180s ../mrworker ../../mrapps/crash.so
   sleep 1
@@ -267,7 +274,7 @@ done
 
 wait
 
-rm $SOCKNAME
+#rm $SOCKNAME
 sort mr-out* | grep . > mr-crash-all
 if cmp mr-crash-all mr-correct-crash.txt
 then
