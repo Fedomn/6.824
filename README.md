@@ -56,6 +56,6 @@ Challenges:
 
 #### test-mr.sh在macOS上注意点
 
-- 没有timeout，需要brew install gtimeout
+- 没有timeout，需要brew install coreutils后, alias timeout=gtimeout
 - 提示wait: -n: invalid option，需要brew upgrade bash，之前默认的版本是version 3.2.57(1)-release
 

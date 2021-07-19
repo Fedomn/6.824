@@ -22,7 +22,7 @@ coord:
 	go run -race mrcoordinator.go ./pg*.txt
 
 worker:
-	go run -race mrworker.go ../mrapps/early_exit.so
+	go run -race mrworker.go ../mrapps/crash.so
 
 test: clean
 	bash test-mr.sh > res.log

@@ -137,6 +137,8 @@ type Coordinator struct {
 
 	nMap    int   // map worker count
 	nReduce int32 // reduce worker count
+
+	grpcServer *grpc.Server // for grpcServer
 }
 
 func (c *Coordinator) replyAssignedMapTaskToWorkerAndMarkHeartbeat(task mapTask, reply *AskTaskReply) {
@@ -376,12 +378,13 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 		for elem := c.mapTasks.Front(); elem != nil; elem = elem.Next() {
 			task := elem.Value.(mapTask)
 			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
+				oldAssociatedWorkerId := task.associatedWorkerId
 				task.resetToFresh()
 				elem.Value = task
 
-				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
+				log.Printf("Evictor: evict unhealty assigned worker: %s", oldAssociatedWorkerId)
 				c.heartbeatLock.Lock()
-				delete(c.heartbeatForAssignedTask, task.associatedWorkerId)
+				delete(c.heartbeatForAssignedTask, oldAssociatedWorkerId)
 				c.heartbeatLock.Unlock()
 			}
 		}
@@ -389,12 +392,13 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 		for elem := c.reduceTasks.Front(); elem != nil; elem = elem.Next() {
 			task := elem.Value.(reduceTask)
 			if assignedWorkerHealthy, ok := healthMap[task.associatedWorkerId]; ok && !assignedWorkerHealthy {
+				oldAssociatedWorkerId := task.associatedWorkerId
 				task.resetToFresh()
 				elem.Value = task
 
-				log.Printf("Evictor: evict unhealty assigned worker: %s", task.associatedWorkerId)
+				log.Printf("Evictor: evict unhealty assigned worker: %s", oldAssociatedWorkerId)
 				c.heartbeatLock.Lock()
-				delete(c.heartbeatForAssignedTask, task.associatedWorkerId)
+				delete(c.heartbeatForAssignedTask, oldAssociatedWorkerId)
 				c.heartbeatLock.Unlock()
 			}
 		}
@@ -409,13 +413,13 @@ func (c *Coordinator) evictUnhealthyAssignedWorker() {
 // start a thread that listens for RPCs from worker.go
 //
 func (c *Coordinator) server() {
-	l, e := net.Listen("tpc", fmt.Sprintf(":%d", PORT))
+	l, e := net.Listen("tcp", fmt.Sprintf(":%d", PORT))
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
-	grpcServer := grpc.NewServer()
-	RegisterMapReduceServer(grpcServer, c)
-	go grpcServer.Serve(l)
+	c.grpcServer = grpc.NewServer()
+	RegisterMapReduceServer(c.grpcServer, c)
+	go c.grpcServer.Serve(l)
 }
 
 // goroutine
@@ -440,6 +444,9 @@ func (c *Coordinator) Done() bool {
 	}
 
 	log.Printf("All tasks already done. Output files: [%v]", outputFiles)
+
+	log.Printf("GracefulStop grpcServer")
+	c.grpcServer.GracefulStop()
 	return true
 }
 
