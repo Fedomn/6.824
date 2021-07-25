@@ -50,7 +50,7 @@ Challenges:
 - err的日志，在main logic调用的function里记录
 - main logic调用function A，A以下的function日志尽量避免，留给function A记录
 
-### Lock策略
+#### Lock策略
 
 - lock只使用在第一级方法里，不要将lock沉入底层方法，除非这个方法名词 明确标识
 
