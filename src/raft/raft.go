@@ -104,6 +104,9 @@ type Raft struct {
 	// for election internal use
 	resetElectionSignal   chan struct{}
 	requestVoteGrantedCnt int
+
+	// for crash and rejoins server 一旦unhealthy，它就不能参与投票 for RequestVote和AppendEntries
+	peersHealthStatus map[int]bool
 }
 
 type LogEntry struct {
@@ -223,6 +226,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
 
+		// Tips 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
+		// 则它要立即 revert to follower
+		if rf.status != follower {
+			rf.status = follower
+			DPrintf("RequestVote %v<-%v revert to follower", rf.me, args.CandidateId)
+		}
+
 		// Tips 在grant vote后，需要立即reset自己的election timeout，防止leader还未发送heartbeats，自己election timeout到了
 		// 从而导致 higher term会在下次 election中当选
 		rf.resetElectionSignal <- struct{}{}
@@ -243,10 +253,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 异常情况：follower term > leader term，说明leader已经在集群中落后了，返回false
 	// 比如：一个follower刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的
 	if rf.currentTerm > args.Term {
-		defer DPrintf("AppendEntries %v<-%v currentTerm %v > term %v", rf.me, args.LeaderId, rf.currentTerm, args.Term)
+		DPrintf("AppendEntries %v<-%v currentTerm %v > term %v", rf.me, args.LeaderId, rf.currentTerm, args.Term)
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
+	}
+
+	// Tips 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
+	// 则它要立即 revert to follower
+	if rf.status != follower {
+		rf.status = follower
+		DPrintf("AppendEntries %v<-%v revert to follower", rf.me, args.LeaderId)
 	}
 
 	rf.resetElectionSignal <- struct{}{}
@@ -395,9 +412,18 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				// election timeout到了，忽略掉当前RPC的reply，直接进入下一轮
-				DPrintf("RequestVote %v->%v RPC timeout, start next election", rf.me, peerIdx)
+				DPrintf("RequestVote %v->%v RPC timeout, start next election and mark unhealthy", rf.me, peerIdx)
+				rf.mu.Lock()
+				rf.peersHealthStatus[peerIdx] = false
+				rf.mu.Unlock()
 				return
 			case <-rpcDone:
+				rf.mu.Lock()
+				if isHealthy, ok := rf.peersHealthStatus[peerIdx]; ok && !isHealthy {
+					DPrintf("RequestVote %v->%v RPC timeout recover and mark healthy", rf.me, peerIdx)
+				}
+				rf.peersHealthStatus[peerIdx] = true
+				rf.mu.Unlock()
 			}
 
 			DPrintf("RequestVote %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
@@ -417,9 +443,18 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 				rf.mu.Unlock()
 			}
 
-			// receive majority servers votes
-			if voteGrantedCnt > len(rf.peers)/2 {
-				DPrintf("RequestVote %v->%v got majority votes, so upgrade to follower immediately", rf.me, peerIdx)
+			rf.mu.Lock()
+			unhealthyCount := 0
+			for _, isHealthy := range rf.peersHealthStatus {
+				if !isHealthy {
+					unhealthyCount++
+				}
+			}
+			rf.mu.Unlock()
+			majorityCount := (len(rf.peers) - unhealthyCount) / 2
+			isEven := (len(rf.peers)-unhealthyCount)%2 == 0 // 判断是否是偶数，如果是的话 voteGrantedCnt>=majorityCount，否则>
+			if (isEven && voteGrantedCnt >= majorityCount) || (!isEven && voteGrantedCnt > majorityCount) {
+				DPrintf("RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
 				rf.setStatusWithLock(leader) // send heartbeat immediately
 				return
 			}
@@ -462,9 +497,18 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				// heartbeat time is up，忽略掉当前RPC的reply，直接进入下一轮
-				DPrintf("AppendEntries %v->%v RPC timeout, start next RPC", rf.me, peerIdx)
+				DPrintf("AppendEntries %v->%v RPC timeout, start next RPC and mark unhealthy", rf.me, peerIdx)
+				rf.mu.Lock()
+				rf.peersHealthStatus[peerIdx] = false
+				rf.mu.Unlock()
 				return
 			case <-rpcDone:
+				rf.mu.Lock()
+				if isHealthy, ok := rf.peersHealthStatus[peerIdx]; ok && !isHealthy {
+					DPrintf("RequestVote %v->%v RPC timeout recover and mark healthy", rf.me, peerIdx)
+				}
+				rf.peersHealthStatus[peerIdx] = true
+				rf.mu.Unlock()
 			}
 
 			DPrintf("AppendEntries %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
@@ -633,6 +677,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.resetElectionSignal = make(chan struct{})
+	rf.peersHealthStatus = make(map[int]bool)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

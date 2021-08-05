@@ -185,3 +185,6 @@ reply information over a channel.
 初始化2个ticker，一直在for循环，时间到了就触发requestVote或appendEntries
 
 log 第一次参数为主人公，即当前rf.me，方便定位
+
+RequestVote 和 AppendEntries 这两个方法，就像是一个server的2个门，集群的其它server可以通过
+这两扇门交换数据 更新状态
