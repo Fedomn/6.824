@@ -79,7 +79,7 @@ Start(command) 是ask raft开始处理append command到replicated logs，这个�
 
 --- 
 
-每当一个new log entry在raft中被committed后，each raft peer都应该send ApplyMsg给service？
+每当一个new log entry在raft中被committed后，each raft peer都应该send ApplyMsg给service，为了tester使用
 
 raft.go中包含`sendRequestVote()`来处理`RequestVote RPC`。raft peers使用`labrpc`进行 RPC通信。
 labrcp中包含了delay，re-order，discard去模拟network的各种问题。
@@ -129,3 +129,59 @@ Result:
 - `9170`: the total number of bytes in the RPC messages
 - `0`: the number of log entries that Raft reports were committed
 
+
+
+### Lab 2 笔记
+
+#### labrpc
+
+代码强依赖于labrpc.go，它是一个channel-based RPC，来发送gob-encoded values，本质通过方法反射调用 模拟RPC
+
+Network: 一个集合 network，clients，servers。它可以AddServer。
+它的核心在`MakeNetwork`，会有创建一个goroutine去处理`rn.endCh`来的pseudo RPC请求，从这里更好的理解channel-based RPC
+
+ClientEnd: 客户端的end-point，用来talk to server 如方法 
+`end.Call("Raft.AppendEntries", &args, &reply)` 发送一个RPC，等待reply
+
+Service: 一个对象，它包含一些方法，可以用来 RPC call
+
+Server: collection of services，它们共享相同的 rpc dispatcher
+
+ClientEnd calls: 可以并发请求，但到达server的order并不保证
+
+MakeService(receiverObject): 和Go的rpcs.Register()相似，注册一个object
+
+#### raft/config
+
+提供给Raft tester使用，所以Config struct里包含了：测试的Raft实例，logs，network等等一系列状态，用来后续assert
+
+endnames: 一个二维数组，每个将要发送到的 端口文件名称。
+二维数组的第一个idx是：raft server idx。第二个idx是：raft server对应的peers idx
+
+#### leader AppendEntries RPC
+
+
+
+
+
+### Lab 2 总结
+1.
+RPC的req和rsp处理逻辑 要放在一个goroutine里，防止使用channel等待收集所有的RPC rsp后再处理，
+因为这里的RPC call会一直**delay很久**住如果没有收到response；同时election ticker需要时刻保持着election timeout在，
+为了保证即使RPC请求**delay很久**了，但election timeout了，仍然会从新开始一个相同term的election。
+所以看出，在一个election timeout时间内，如果RPC请求还没返回，则直接cancel RPC进行下一轮。这才make sense
+
+Each RPC should probably be sent (and its reply processed) in its own
+goroutine, for two reasons: so that unreachable peers don't delay the
+collection of a majority of replies, and so that the heartbeat and
+election timers can continue to tick at all times. It's easiest to do
+the RPC reply processing in the same goroutine, rather than sending
+reply information over a channel.
+
+2.
+处理一个可能delay很久的RPC goroutine优雅退出，防止泄漏
+
+3.
+初始化2个ticker，一直在for循环，时间到了就触发requestVote或appendEntries
+
+log 第一次参数为主人公，即当前rf.me，方便定位

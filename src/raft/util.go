@@ -2,10 +2,14 @@ package raft
 
 import "log"
 
-// Debugging
-const Debug = false
+func init() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+}
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
+// Debugging
+const Debug = true
+
+func DPrintf(format string, a ...interface{}) {
 	if Debug {
 		log.Printf(format, a...)
 	}
