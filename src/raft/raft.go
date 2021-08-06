@@ -430,7 +430,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 
 			// 只要有一个follower的term给candidate大，立即revert to follower
 			if reply.Term > currentTerm && reply.VoteGranted == false {
-				DPrintf("RequestVote %v->%v currentTerm %v got higher term %v, so downgrade to follower immediately", rf.me, peerIdx, currentTerm, reply.Term)
+				DPrintf("RequestVote %v->%v currentTerm %v got higher term %v, so revert to follower immediately", rf.me, peerIdx, currentTerm, reply.Term)
 				rf.setStatusWithLock(follower)
 				return
 			}
@@ -454,6 +454,10 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			majorityCount := (len(rf.peers) - unhealthyCount) / 2
 			isEven := (len(rf.peers)-unhealthyCount)%2 == 0 // 判断是否是偶数，如果是的话 voteGrantedCnt>=majorityCount，否则>
 			if (isEven && voteGrantedCnt >= majorityCount) || (!isEven && voteGrantedCnt > majorityCount) {
+				if rf.getStatusWithLock() == leader {
+					DPrintf("RequestVote %v->%v already leader do nothing", rf.me, peerIdx)
+					return
+				}
 				DPrintf("RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
 				rf.setStatusWithLock(leader) // send heartbeat immediately
 				return
@@ -514,7 +518,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			DPrintf("AppendEntries %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
 
 			if reply.Term > currentTerm && reply.Success == false {
-				DPrintf("AppendEntries %v->%v currentTerm %v got higher term %v, so downgrade to follower immediately", rf.me, peerIdx, currentTerm, reply.Term)
+				DPrintf("AppendEntries %v->%v currentTerm %v got higher term %v, so revert to follower immediately", rf.me, peerIdx, currentTerm, reply.Term)
 				rf.setStatusWithLock(follower)
 				return
 			}
