@@ -8,7 +8,7 @@ default: test
 #		go test -run 2A -race > log ; \
 #	done
 
-COUNT = 10
+COUNT = 200
 TEST_NAME = 2A
 
 test: clean
