@@ -1,17 +1,24 @@
 package raft
 
-import "log"
+import (
+	"fmt"
+	"log"
+	"os"
+)
+
+var gLog *log.Logger
 
 func init() {
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	gLog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 }
 
 // Debugging
 const Debug = true
 
-func DPrintf(format string, a ...interface{}) {
+func DPrintf(rfme int, format string, a ...interface{}) {
 	if Debug {
-		log.Printf(format, a...)
+		prefix := fmt.Sprintf("[%d] ", rfme)
+		gLog.Printf(prefix+format, a...)
 	}
 	return
 }

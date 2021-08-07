@@ -188,3 +188,47 @@ log 第一次参数为主人公，即当前rf.me，方便定位
 
 RequestVote 和 AppendEntries 这两个方法，就像是一个server的2个门，集群的其它server可以通过
 这两扇门交换数据 更新状态
+
+4.
+RequestVote 0->2 voteGrant 
+                          -> majority -> leader
+RequestVote 0->1 voteGrant
+---
+RequestVote 1->0 voteGrant
+                          -> majority -> leader
+RequestVote 1->2 voteGrant
+
+如上情况，同时出现了2个leader，从而引出了一个 follower 投票的机制到底是什么？
+
+答案：split vote出现，通过增加term，再来election
+
+
+If RPC request or response contains term T > currentTerm: 
+set currentTerm = T, convert to follower
+这里这句话的深意：尤其是它对于RequestVote RPC的意义
+只要有higher term请求RequestVote，raft就要set currentTerm = T，并且RequestVote中相同term返回了FALSE
+因此，每次必须有higher term来抢占到majority的server才能当选额leader，如果其中有一个server
+被其它candidate抢先占了相同的term，下次再来
+
+
+5.
+需要通过并发的视角 来看待每一行代码，比如：
+一个goroutine在运行400行代码的逻辑，但另外一个goroutine运行到了500行逻辑，
+从而改变了内部状态 影响了400行的逻辑。
+只要我们遵循时序逻辑就好了。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
