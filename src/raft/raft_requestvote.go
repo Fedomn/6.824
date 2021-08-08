@@ -206,17 +206,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// 异常情况：follower term > candidate term，说明candidate已经在集群中落后了，返回false
 	// 比如：一个follower刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的
 	if rf.currentTerm > args.Term {
-		DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v > term %v", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+		DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v > term %v, ignore lower term", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
 	}
 
 	// edge case：比如，上一个term的follower在当前term才从crash中recover，则它刚好start election，将上一个term+1，就是当前这个Raft函数
-	// 这时有个candidate向它发送RequestVote，刚好term相等。则也不应该
+	// 这时有个candidate向它发送RequestVote，刚好term相等，则不应该vote。
 	// 或者 比如：刚好2个follower在同一时间start election，互相发送了RequestVote RPC，这种情况下不应该 vote
-	if rf.currentTerm == args.Term && rf.votedFor != args.CandidateId {
-		DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v == term %v, candidate not same as votedFor %v", rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
+	if rf.currentTerm == args.Term {
+		// 这一条，也保证了vote for first ask candidate，因为第一个ask的candidate已经将argsTerm复制给了当前raft的currentTerm
+		DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v == term %v, already votedFor %v", rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 		return
