@@ -101,16 +101,16 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			DPrintf(rf.me, "AppendEntries %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
 
 			if reply.Term > rf.getCurrentTermWithLock() && reply.Success == false {
-				// 如果已经在其它goroutine变成了follower，这里就不在处理
-				if rf.getStatusWithLock() == follower && rf.currentTerm >= reply.Term {
+				if rf.isFollowerWithLock() { // 如果已经在其它goroutine变成了follower，这里就不在处理
 					return
 				}
-
-				DPrintf(rf.me, "AppendEntries %v->%v currentTerm %v got higher term %v, so revert to follower immediately", rf.me, peerIdx, rf.getCurrentTermWithLock(), reply.Term)
+				DPrintf(rf.me, "AppendEntries %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+					rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
 				rf.safe(func() {
 					rf.currentTerm = reply.Term
 					rf.status = follower
 					DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
+
 					rf.resetElectionSignal <- struct{}{}
 				})
 				return
@@ -152,8 +152,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Tips 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
 	// 则它要立即 revert to follower
 	if rf.status != follower {
+		DPrintf(rf.me, "AppendEntries %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+			rf.me, args.LeaderId, rf.status, rf.currentTerm, args.Term)
 		rf.status = follower
-		DPrintf(rf.me, "AppendEntries %v<-%v revert to follower", rf.me, args.LeaderId)
+		DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
 	}
 
 	rf.resetElectionSignal <- struct{}{}

@@ -72,6 +72,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 	rf.safe(func() {
 		rf.currentTerm++
 		rf.status = candidate
+		DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
 		rf.votedFor = rf.me
 	})
 
@@ -136,16 +137,17 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			// 只要有一个follower的term给candidate大，立即revert to follower
 			// 注意：这里rf.getCurrentTerm可能会被其它goroutine修改到，比如rejoin的sever的term更大，它的RPC会将server term修改掉
 			if reply.Term > rf.getCurrentTermWithLock() && reply.VoteGranted == false {
-				if rf.isLeaderWithLock() && rf.currentTerm >= reply.Term { // 如果已经在其它goroutine变成了follower，这里就不在处理
+				if rf.isFollowerWithLock() { // 如果已经在其它goroutine变成了follower，这里就不在处理
 					return
 				}
-				DPrintf(rf.me, "RequestVote %v->%v currentTerm %v got higher term %v, so revert to follower immediately", rf.me, peerIdx, rf.getCurrentTermWithLock(), reply.Term)
+				DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+					rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
 				rf.safe(func() {
 					// set currentTerm的目的：明知道当前这个server的term已经落后于集群了，需要尽早追赶上，就直接赋值成reply的term
 					rf.currentTerm = reply.Term
 					rf.status = follower
 					DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
-					// FIXME
+
 					rf.resetElectionSignal <- struct{}{}
 				})
 				return
@@ -256,8 +258,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// Tips 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
 		// 则它要立即 revert to follower
 		if rf.status != follower {
+			DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+				rf.me, args.CandidateId, rf.status, rf.currentTerm, reply.Term)
 			rf.status = follower
-			DPrintf(rf.me, "RequestVote %v<-%v revert to follower", rf.me, args.CandidateId)
+			DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
 		}
 
 		// Tips 在grant vote后，需要立即reset自己的election timeout，防止leader还未发送heartbeats，自己election timeout到了
