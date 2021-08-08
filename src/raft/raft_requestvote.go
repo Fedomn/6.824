@@ -63,8 +63,9 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 
 	// reset 计数器
 	rf.safe(func() {
-		rf.requestVoteCnt = 0
-		rf.requestVoteGrantedCnt = 0
+		// include candidate itself
+		rf.requestVoteCnt = 1
+		rf.requestVoteGrantedCnt = 1
 	})
 
 	// Step 1: 准备election需要数据
@@ -158,26 +159,9 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 				})
 			}
 
-			unhealthyCount := 0
-			rf.safe(func() {
-				for _, isHealthy := range rf.peersHealthStatus {
-					if !isHealthy {
-						unhealthyCount++
-					}
-				}
+			majorityCount := len(rf.peers)/2 + 1
 
-			})
-
-			majorityCount := (len(rf.peers) - unhealthyCount) / 2
-
-			// to fix if there's no quorum, no leader should be elected.
-			if majorityCount == 0 {
-				DPrintf(rf.me, "RequestVote %v->%v no quorum, no leader should be elected", rf.me, peerIdx)
-				return
-			}
-
-			isEven := (len(rf.peers)-unhealthyCount)%2 == 0 // 判断是否是偶数，如果是的话 voteGrantedCnt>=majorityCount，否则>
-			if (isEven && voteGrantedCnt >= majorityCount) || (!isEven && voteGrantedCnt > majorityCount) {
+			if voteGrantedCnt >= majorityCount {
 				if rf.isLeaderWithLock() {
 					DPrintf(rf.me, "RequestVote %v->%v already leader do nothing", rf.me, peerIdx)
 					return
@@ -192,7 +176,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 
 			// 走到这里说明 已经RequestVote给到了majority的server，但没有得到voteGrant，所以增加term，再开始election
 			// 注意：此时会revert to follower，等待election timeout在变成candidate
-			if (isEven && voteCnt >= majorityCount) || (!isEven && voteCnt > majorityCount) {
+			if voteCnt >= majorityCount {
 				// 如果已经在其它goroutine变成了follower，这里就不在处理
 				if rf.isFollowerWithLock() {
 					return
