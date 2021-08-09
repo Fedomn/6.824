@@ -61,6 +61,8 @@ Challenges:
 
 ### [Lab 2: Raft](http://nil.csail.mit.edu/6.824/2021/labs/lab-raft.html)
 
+#### overview
+
 raft实现需要支持以下接口
 
 1. `rf := Make(peers, me, persister, applyCh)`
@@ -84,7 +86,7 @@ Start(command) 是ask raft开始处理append command到replicated logs，这个�
 raft.go中包含`sendRequestVote()`来处理`RequestVote RPC`。raft peers使用`labrpc`进行 RPC通信。
 labrcp中包含了delay，re-order，discard去模拟network的各种问题。
 
-#### Part 2A: leader election
+#### Part 2A leader election hints
 
 Task:
 
@@ -129,11 +131,9 @@ Result:
 - `9170`: the total number of bytes in the RPC messages
 - `0`: the number of log entries that Raft reports were committed
 
+#### Part 2A notes
 
-
-### Lab 2 笔记
-
-#### labrpc
+##### labrpc
 
 代码强依赖于labrpc.go，它是一个channel-based RPC，来发送gob-encoded values，本质通过方法反射调用 模拟RPC
 
@@ -151,71 +151,41 @@ ClientEnd calls: 可以并发请求，但到达server的order并不保证
 
 MakeService(receiverObject): 和Go的rpcs.Register()相似，注册一个object
 
-#### raft/config
+##### raft/config
 
 提供给Raft tester使用，所以Config struct里包含了：测试的Raft实例，logs，network等等一系列状态，用来后续assert
 
 endnames: 一个二维数组，每个将要发送到的 端口文件名称。
 二维数组的第一个idx是：raft server idx。第二个idx是：raft server对应的peers idx
 
-#### leader AppendEntries RPC
+##### candidate处理 send or receive RPC逻辑在一个goroutine里
 
+RPC的req和rsp处理逻辑 要放在一个goroutine里，不要使用channel等待收集所有的RPC rsp后再处理，
+因为RPC call可能会**delay很久**才有rsp。
 
+同时election ticker需要时刻保持timeout循环，为了保证即使RPC请求**delay很久**了，
+但在election timeout后，仍然会从开始一个新的term+1的election。
 
+这里term+1，是因为candidate是并发给所有servers发送的RPC，存在着已经grant term的server，
+所以新一轮的RequestVote RPC必须将term+1，才能满足follower only vote for first ask candidate。
 
+##### revert to follower的情况
 
-### Lab 2 总结
-1.
-RPC的req和rsp处理逻辑 要放在一个goroutine里，防止使用channel等待收集所有的RPC rsp后再处理，
-因为这里的RPC call会一直**delay很久**住如果没有收到response；同时election ticker需要时刻保持着election timeout在，
-为了保证即使RPC请求**delay很久**了，但election timeout了，仍然会从新开始一个相同term的election。
-所以看出，在一个election timeout时间内，如果RPC请求还没返回，则直接cancel RPC进行下一轮。这才make sense
+all servers rules中包含一条：If RPC request or response contains term T > currentTerm:
+set currentTerm = T, convert to follower.
 
-Each RPC should probably be sent (and its reply processed) in its own
-goroutine, for two reasons: so that unreachable peers don't delay the
-collection of a majority of replies, and so that the heartbeat and
-election timers can continue to tick at all times. It's easiest to do
-the RPC reply processing in the same goroutine, rather than sending
-reply information over a channel.
+这句话的意义：只要server遇到了higher term的RPC，自己就会revert到follower。
 
-2.
-处理一个可能delay很久的RPC goroutine优雅退出，防止泄漏
+leader election情况中：每次必须有higher term来抢占到majority的server，才能当选leader；
+如果被其它相同term的 candidate抢先一些server，无法到达majority，则会进入下一轮election
 
-3.
-初始化2个ticker，一直在for循环，时间到了就触发requestVote或appendEntries
+##### RequestVote与AppendEntries 代码思想
 
-log 第一次参数为主人公，即当前rf.me，方便定位
-
-RequestVote 和 AppendEntries 这两个方法，就像是一个server的2个门，集群的其它server可以通过
-这两扇门交换数据 更新状态
-
-4.
-RequestVote 0->2 voteGrant 
-                          -> majority -> leader
-RequestVote 0->1 voteGrant
----
-RequestVote 1->0 voteGrant
-                          -> majority -> leader
-RequestVote 1->2 voteGrant
-
-如上情况，同时出现了2个leader，从而引出了一个 follower 投票的机制到底是什么？
-
-答案：split vote出现，通过增加term，再来election
-
-
-If RPC request or response contains term T > currentTerm: 
-set currentTerm = T, convert to follower
-这里这句话的深意：尤其是它对于RequestVote RPC的意义
-只要有higher term请求RequestVote，raft就要set currentTerm = T，并且RequestVote中相同term返回了FALSE
-因此，每次必须有higher term来抢占到majority的server才能当选额leader，如果其中有一个server
-被其它candidate抢先占了相同的term，下次再来
-
-
-5.
 需要通过并发的视角 来看待每一行代码，比如：
-一个goroutine在运行400行代码的逻辑，但另外一个goroutine运行到了500行逻辑，
-从而改变了内部状态 影响了400行的逻辑。
-只要我们遵循时序逻辑就好了。
+一个goroutine在运行400行代码的逻辑，但另外一个goroutine运行到了500行逻辑， 从而改变了内部状态 影响了400行的逻辑。
+
+因此，在这种并发程序中，状态修改之前，仍需要double check，防止前一时刻别的goroutine已经做了相同change，
+
 
 
 
