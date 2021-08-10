@@ -187,6 +187,15 @@ leader election情况中：每次必须有higher term来抢占到majority的serv
 因此，在这种并发程序中，状态修改之前，仍需要double check，防止前一时刻别的goroutine已经做了相同change，
 
 
+#### Part 2B log hints
+
+Tasks: 实现append new log entries
+
+Hints:
+
+- 第一步通过测试`TestBasicAgree2B`。通过实现`Start()`和`AppendEntries`逻辑来send/receive new log entries
+- 需要实现election restriction。Paper section 5.4.1
+- loop check方法需要有个pause。使用Cond或time.Sleep在loop iteration
 
 
 
