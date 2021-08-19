@@ -76,6 +76,9 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 		rf.votedFor = rf.me
 	})
 
+	onceSetLeader := sync.Once{}
+	onceSetFollower := sync.Once{}
+
 	// Step 2: 发送RequestVote RPC 并根据reply决定是升级leader还是降为follower
 	for idx := range rf.peers {
 		if idx == rf.me { // ignore itself
@@ -85,7 +88,8 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 
 		// Tips 注意：从这开始是 多个goroutine 并发修改状态，可能存在时序问题，所以每次操作前 确保前置条件正确
 		go func() {
-			lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
+			// Tips 注意：这里使用candidate的committedIndex，因为uncommittedIndex不能作为log matching property依据
+			lastLogIndex, lastLogTerm := rf.getLastCommittedLogIndexTerm()
 			args := &RequestVoteArgs{
 				Term:         rf.getCurrentTermWithLock(),
 				CandidateId:  rf.me,
@@ -102,7 +106,9 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			go func() {
 				DPrintf(rf.me, "RequestVote %v->%v send RPC %+v", rf.me, peerIdx, args)
 				if ok := rf.sendRequestVote(peerIdx, args, reply); !ok {
-					DPrintf(rf.me, "RequestVote %v->%v RPC got ok false", rf.me, peerIdx)
+					DPrintf(rf.me, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
+					// 如果server not reply，则直接退出，等待下一轮RPC
+					return
 				}
 				rpcDone <- true
 			}()
@@ -164,14 +170,14 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			majorityCount := len(rf.peers)/2 + 1
 
 			if voteGrantedCnt >= majorityCount {
-				if rf.isLeaderWithLock() {
-					DPrintf(rf.me, "RequestVote %v->%v already leader do nothing", rf.me, peerIdx)
-					return
-				}
 				if rf.isCandidateWithLock() {
-					DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
-					rf.setStatusWithLock(leader) // send heartbeat immediately
-					go rf.startAppendEntries(context.Background())
+					onceSetLeader.Do(func() {
+						DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
+						rf.setLeaderWithLock()
+						// Tips bug 不加以下代码，存在可能性选不出leader，同时 需要防止多发了一次，需要加reset heartbeat chan
+						go rf.startAppendEntries(context.Background()) // send heartbeat immediately
+						rf.resetAppendEntriesSignal <- struct{}{}
+					})
 				}
 				return
 			}
@@ -179,15 +185,13 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			// 走到这里说明 已经RequestVote给到了majority的server，但没有得到voteGrant，所以增加term，再开始election
 			// 注意：此时会revert to follower，等待election timeout在变成candidate
 			if voteCnt >= majorityCount {
-				// 如果已经在其它goroutine变成了follower，这里就不在处理
-				if rf.isFollowerWithLock() {
-					return
-				}
-				rf.safe(func() {
-					DPrintf(rf.me, "RequestVote %v->%v may encounter split vote, so revert to follower and wait next election", rf.me, peerIdx)
-					rf.status = follower
-					DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
-					rf.resetElectionSignal <- struct{}{}
+				onceSetFollower.Do(func() {
+					rf.safe(func() {
+						DPrintf(rf.me, "RequestVote %v->%v may encounter split vote, so revert to follower and wait next election", rf.me, peerIdx)
+						rf.status = follower
+						DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
+						rf.resetElectionSignal <- struct{}{}
+					})
 				})
 				return
 			}
@@ -227,22 +231,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// 正常情况：follower term < candidate term，说明candidate早于follower，再经过一致性检查通过后，返回true
 
-	// consistency check
-	passCheck := false
+	// 为了保证每个当选的节点都有当前最新的数据，如果节点发现选举节点的日志信息并不比自己更新，将拒绝给这个节点投票
+	passCheck := true
 	for loop := true; loop; loop = false {
-		if len(rf.log) == 0 && rf.votedFor == -1 { // first vote returns true
-			passCheck = true
+		lastLogIndex, lastLogTerm := rf.getLastCommittedLogIndexTerm()
+		if args.LastLogTerm < lastLogTerm {
+			passCheck = false
+			DPrintf(rf.me, "RequestVote %v<-%v fail consistency check about term. %v < %v", rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
 			break
 		}
 
-		if len(rf.log) == 0 && args.LastLogIndex == 0 { // not start append any entries
-			passCheck = true
-			break
-		}
-
-		// 基于logIndex从1开始计算
-		if len(rf.log) == args.LastLogIndex && rf.log[args.LastLogIndex-1].term == args.LastLogTerm {
-			passCheck = true
+		if args.LastLogIndex < lastLogIndex {
+			passCheck = false
+			DPrintf(rf.me, "RequestVote %v<-%v fail consistency check about index. %v < %v", rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
 			break
 		}
 	}
@@ -268,7 +269,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// 从而导致 higher term会在下次 election中当选
 		rf.resetElectionSignal <- struct{}{}
 	} else {
-		DPrintf(rf.me, "RequestVote %v<-%v fail consistency check", rf.me, args.CandidateId)
+		reply.VoteGranted = false
 	}
 	return
 }

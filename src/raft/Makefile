@@ -1,6 +1,6 @@
 #./go-test-many.sh 测试次数 并行数(默认是 CPU 个数) 哪个测试
 
-default: 2B
+default: test
 
 #LOOPS = 100
 #2A:
@@ -8,14 +8,14 @@ default: 2B
 #		go test -run 2A -race > log ; \
 #	done
 
-COUNT = 200
+COUNT = 100
 TEST_NAME = 2A
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
 
 2A-count:
-	go test -run TestManyElections2A -race -failfast -count 50 > log
+	go test -run TestReElection2A -race -failfast -count 1 > log
 
 clean:
 	@rm test-*.log || true

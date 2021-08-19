@@ -48,6 +48,13 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	cfg.end()
+
+	for i := 0; i < servers; i++ {
+		raft := cfg.rafts[i]
+		raft.mu.Lock()
+		fmt.Printf("Raft %d, log: %v, committedIndex: %d, nextIndex: %v\n", i, raft.log, raft.committedIndex, raft.nextIndex)
+		raft.mu.Unlock()
+	}
 }
 
 func TestReElection2A(t *testing.T) {
@@ -84,6 +91,13 @@ func TestReElection2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	cfg.end()
+
+	for i := 0; i < servers; i++ {
+		raft := cfg.rafts[i]
+		raft.mu.Lock()
+		fmt.Printf("Raft %d, log: %v, committedIndex: %d, nextIndex: %v\n", i, raft.log, raft.committedIndex, raft.nextIndex)
+		raft.mu.Unlock()
+	}
 }
 
 func TestManyElections2A(t *testing.T) {
@@ -117,6 +131,16 @@ func TestManyElections2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	cfg.end()
+
+	time.Sleep(500 * time.Millisecond)
+
+	for i := 0; i < servers; i++ {
+		raft := cfg.rafts[i]
+		raft.mu.Lock()
+		fmt.Printf("Raft %d, log: %v, committedIndex: %d, majorityCommittedIndex: %d, nextIndex: %v\n",
+			i, raft.log, raft.committedIndex, raft.majorityCommittedIndex, raft.nextIndex)
+		raft.mu.Unlock()
+	}
 }
 
 func TestBasicAgree2B(t *testing.T) {

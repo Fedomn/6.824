@@ -89,8 +89,9 @@ type Raft struct {
 	votedFor    int        // voted for candidate's id
 	log         []LogEntry // first index is 1
 
-	committedIndex int
-	lastApplied    int
+	majorityCommittedIndex int // 只存在leader上
+	committedIndex         int // 真实的committedIndex = majorityCommittedIndex - 1
+	lastApplied            int
 
 	// for leader
 	nextIndex  []int // 每个peer一个，为leader下次发送的log entry index
@@ -101,13 +102,13 @@ type Raft struct {
 	requestVoteCnt        int
 	requestVoteGrantedCnt int
 
+	// for append log entries internal use
+	resetAppendEntriesSignal   chan struct{}
+	appendEntriesCnt        int
+	appendEntriesSuccessCnt int
+
 	// for crash and rejoins server 一旦unhealthy，它就不能参与投票 for RequestVote和AppendEntries
 	peersHealthStatus map[int]bool
-}
-
-type LogEntry struct {
-	command interface{}
-	term    int
 }
 
 // return currentTerm and whether this server believes it is the leader.
@@ -189,14 +190,27 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 //
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) {
+	index = -1
+	term = -1
+	isLeader = rf.isLeaderWithLock()
+	if !isLeader {
+		return
+	}
 
 	// Your code here (2B).
+	rf.safe(func() {
+		logEntry := LogEntry{
+			Command: command,
+			Term:    rf.currentTerm,
+		}
+		rf.log = append(rf.log, logEntry)
 
-	return index, term, isLeader
+		index = len(rf.log) - 1 // 因为第一个logEntry是empty
+		term = rf.currentTerm
+	})
+
+	return
 }
 
 //
@@ -242,11 +256,14 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.log = make([]LogEntry, 0)
+	rf.log = append(rf.log, LogEntry{}) // first empty logEntry
+	rf.majorityCommittedIndex = 0
 	rf.committedIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.resetElectionSignal = make(chan struct{})
+	rf.resetAppendEntriesSignal = make(chan struct{})
 	rf.peersHealthStatus = make(map[int]bool)
 
 	// initialize from state persisted before a crash

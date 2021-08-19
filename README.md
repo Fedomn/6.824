@@ -197,11 +197,25 @@ Hints:
 - 需要实现election restriction。Paper section 5.4.1
 - loop check方法需要有个pause。使用Cond或time.Sleep在loop iteration
 
+#### Part 2B notes
+
+##### commit如果判断 
+
+不能通过复制到majority server来判断commit，通过下一个log commit来确保上一个确实commit
 
 
+##### heartbeat需要记录到log[]里吗
+
+需要，heartbeat仅仅是entries为空，它也需要做consistency check
+[参考](https://thesquareplanet.com/blog/students-guide-to-raft/#the-importance-of-details)
 
 
+##### 潜在问题
 
+leader的committedIndex会比follower 大1，但是这不代表这集群里 这个log真实commit了，
+因为follower会在下一个leader的RPC才会 commit上一个index。所以，对集群来说，真实的committedIndex = leaderCommittedIndex-1
+
+如果存在，leader需要向follower 一次RPC append许多log entries情况，注意append完后更新nextIndex
 
 
 

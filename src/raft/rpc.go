@@ -17,16 +17,22 @@ type RequestVoteReply struct {
 	VoteGranted bool // true means replied server agree
 }
 
+type LogEntry struct {
+	Command interface{}
+	Term    int
+}
+
 type AppendEntriesArgs struct {
 	Term         int           // leader's term
 	LeaderId     int           // leader id
-	PervLogIndex int           // index of log entry preceding the following entries
+	PrevLogIndex int           // index of log entry preceding the following entries
 	PrevLogTerm  int           // term of pervLogIndex log entry
-	Entries      []interface{} // log entries to store (empty for heartbeat)
+	Entries      []LogEntry // log entries to store (empty for heartbeat)
 	LeaderCommit int           // leader commit index
 }
 
 type AppendEntriesReply struct {
 	Term    int  // replied server's term
 	Success bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
+
 }
