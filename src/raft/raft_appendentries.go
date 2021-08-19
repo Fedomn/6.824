@@ -77,11 +77,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 	rf.safe(func() {
 		if rf.majorityCommittedIndex <= rf.getLastLogIndex() {
 			// 没有uncommitted log entries，则append empty heartbeat
-			rf.log = append(rf.log, LogEntry{
-				Command: nil,
-				Term:    rf.currentTerm,
-			})
-			DPrintf(rf.me, "AppendEntries no uncommitted log entries, so will append empty as heartbeat")
+			DPrintf(rf.me, "AppendEntries no uncommitted log entries")
 		}
 	})
 
@@ -183,14 +179,20 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 				rf.safe(func() {
 					rf.appendEntriesSuccessCnt++
 					appendEntriesSuccessCnt = rf.appendEntriesSuccessCnt
-					// Tips 防止多次append成功的server日志，导致nextIndex溢出
-					rf.nextIndex[peerIdx] = min(rf.nextIndex[peerIdx]+len(args.Entries), rf.committedIndex+1)
-					rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx]
-					DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so will increase nextIndex %v",
-						rf.me, peerIdx, len(args.Entries), rf.nextIndex)
+					if len(args.Entries) == 0 {
+						DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so heartbeat will do nothing",
+							rf.me, peerIdx, len(args.Entries))
+					} else {
+						// Tips 防止多次append成功的server日志，导致nextIndex溢出
+						rf.nextIndex[peerIdx] = min(rf.nextIndex[peerIdx]+len(args.Entries), rf.committedIndex+1)
+						rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx]
+						DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so will increase nextIndex %v",
+							rf.me, peerIdx, len(args.Entries), rf.nextIndex)
+					}
 				})
 			} else {
 				rf.safe(func() {
+					// TODO enhance
 					rf.nextIndex[peerIdx]--
 					DPrintf(rf.me, "AppendEntries %v->%v RPC got false, so will decrease nextIndex and append again, %v",
 						rf.me, peerIdx, rf.nextIndex)
@@ -203,10 +205,15 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 				// Tips 不能通过复制到majority server来判断commit，通过下一个log commit来确保上一个确实commit. Log Matching Property.
 				commitOnce.Do(func() {
 					rf.safe(func() {
-						rf.majorityCommittedIndex++
-						rf.committedIndex = rf.majorityCommittedIndex - 1
-						DPrintf(rf.me, "AppendEntries %v->%v got majority success, so commit these log entries", rf.me, peerIdx)
-						DPrintf(rf.me, "AppendEntries %v->%v after commit, committedIndex: %v, log: %v", rf.me, peerIdx, rf.committedIndex, rf.log)
+						if len(args.Entries) == 0 {
+							DPrintf(rf.me, "AppendEntries %v->%v got majority success, entries len: %v, so will not commit anything",
+								rf.me, peerIdx, len(args.Entries))
+						} else {
+							rf.majorityCommittedIndex++
+							rf.committedIndex = rf.majorityCommittedIndex - 1
+							DPrintf(rf.me, "AppendEntries %v->%v got majority success, so commit these log entries", rf.me, peerIdx)
+							DPrintf(rf.me, "AppendEntries %v->%v after commit, committedIndex: %v, log: %v", rf.me, peerIdx, rf.committedIndex, rf.log)
+						}
 					})
 				})
 				return
