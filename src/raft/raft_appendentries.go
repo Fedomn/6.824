@@ -73,11 +73,14 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 	})
 
 	commitOnce := sync.Once{}
+	onceSetFollower := sync.Once{}
 
 	rf.safe(func() {
-		if rf.majorityCommittedIndex <= rf.getLastLogIndex() {
+		if rf.commitIndex == rf.getLastLogIndex() {
 			// 没有uncommitted log entries，则append empty heartbeat
 			DPrintf(rf.me, "AppendEntries no uncommitted log entries")
+		} else {
+			DPrintf(rf.me, "AppendEntries has uncommitted log entries")
 		}
 	})
 
@@ -89,18 +92,14 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 		go func() {
 			var args *AppendEntriesArgs
 			rf.safe(func() {
-				// 取min的目的：防止有的server已经append up-to-date后，由于没有到majority仍会retry
-				// 所以，防止slice溢出，仍然取leader初始化时的nextIndex
-				nextLogEntryIndex := min(rf.nextIndex[peerIdx], rf.committedIndex+1)
-				// 这一轮leader希望follower commit的index为上一轮的majority reply success的index
-				leaderCommitIndex := rf.majorityCommittedIndex
+				nextLogEntryIndex := rf.nextIndex[peerIdx]
+				leaderCommitIndex := rf.getLastLogIndex()
 
 				// Tips leader在appendEntries会根据nextIndex，给follower补un-appended log entries
 				// heartbeat只是entries为空的AppendEntries RPC
 				entries := make([]LogEntry, 0)
 
-				tmp := rf.getEntriesToEnd(nextLogEntryIndex)
-				entries = append(entries, tmp...)
+				entries = append(entries, rf.getEntriesToEnd(nextLogEntryIndex)...)
 
 				prevLogIndex := nextLogEntryIndex - 1
 				prevLogTerm := rf.log[prevLogIndex].Term
@@ -158,18 +157,17 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			})
 
 			if reply.Term > rf.getCurrentTermWithLock() && reply.Success == false {
-				if rf.isFollowerWithLock() { // 如果已经在其它goroutine变成了follower，这里就不在处理
-					return
-				}
-				DPrintf(rf.me, "AppendEntries %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-					rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
-				rf.safe(func() {
-					rf.currentTerm = reply.Term
-					rf.status = follower
-					DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v, logs %v", rf.me, rf.status, rf.currentTerm, rf.log)
+				onceSetFollower.Do(func() {
+					DPrintf(rf.me, "AppendEntries %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+						rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
+					rf.safe(func() {
+						rf.currentTerm = reply.Term
+						rf.status = follower
+						DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v, logs %v", rf.me, rf.status, rf.currentTerm, rf.log)
 
-					rf.resetElectionSignal <- struct{}{}
-					rf.resetAppendEntriesSignal <- struct{}{}
+						rf.resetElectionSignal <- struct{}{}
+						rf.resetAppendEntriesSignal <- struct{}{}
+					})
 				})
 				return
 			}
@@ -183,16 +181,16 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 						DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so heartbeat will do nothing",
 							rf.me, peerIdx, len(args.Entries))
 					} else {
-						// Tips 防止多次append成功的server日志，导致nextIndex溢出
-						rf.nextIndex[peerIdx] = min(rf.nextIndex[peerIdx]+len(args.Entries), rf.committedIndex+1)
+						// FIXME 防止多次append成功的server日志，导致nextIndex溢出
+						rf.nextIndex[peerIdx] = rf.nextIndex[peerIdx] + len(args.Entries)
 						rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx]
-						DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so will increase nextIndex %v",
-							rf.me, peerIdx, len(args.Entries), rf.nextIndex)
+						DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so will increase nextIndex %v, matchIndex %v",
+							rf.me, peerIdx, len(args.Entries), rf.nextIndex, rf.matchIndex)
 					}
 				})
 			} else {
 				rf.safe(func() {
-					// TODO enhance
+					// TODO optimization
 					rf.nextIndex[peerIdx]--
 					DPrintf(rf.me, "AppendEntries %v->%v RPC got false, so will decrease nextIndex and append again, %v",
 						rf.me, peerIdx, rf.nextIndex)
@@ -202,17 +200,32 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 
 			majorityCount := len(rf.peers)/2 + 1
 			if appendEntriesSuccessCnt >= majorityCount {
-				// Tips 不能通过复制到majority server来判断commit，通过下一个log commit来确保上一个确实commit. Log Matching Property.
 				commitOnce.Do(func() {
 					rf.safe(func() {
 						if len(args.Entries) == 0 {
 							DPrintf(rf.me, "AppendEntries %v->%v got majority success, entries len: %v, so will not commit anything",
 								rf.me, peerIdx, len(args.Entries))
 						} else {
-							rf.majorityCommittedIndex++
-							rf.committedIndex = rf.majorityCommittedIndex - 1
+							// FIXME 多个log entries情况下
+							rf.commitIndex = rf.getLastLogIndex()
 							DPrintf(rf.me, "AppendEntries %v->%v got majority success, so commit these log entries", rf.me, peerIdx)
-							DPrintf(rf.me, "AppendEntries %v->%v after commit, committedIndex: %v, log: %v", rf.me, peerIdx, rf.committedIndex, rf.log)
+							DPrintf(rf.me, "AppendEntries %v->%v after commit, commitIndex: %v, log: %v", rf.me, peerIdx, rf.commitIndex, rf.log)
+						}
+
+						// FIXME -----------------------------------------------
+						// FIXME 因为不能确认当前leader对于的peer是哪个，所以args.Entries可能出现，是落后leader很多的那个peer的logs
+						deltaLogsCount := rf.commitIndex - rf.lastApplied
+						DPrintf(rf.me, "AppendEntries %v->%v will apply %v - %v = delta %v",
+							rf.me, peerIdx, rf.commitIndex, rf.lastApplied, deltaLogsCount)
+
+						for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+							logEntry := rf.getLogEntry(i)
+							rf.applyCh <- ApplyMsg{
+								CommandValid: true,
+								Command:      logEntry.Command,
+								CommandIndex: i,
+							}
+							rf.lastApplied++
 						}
 					})
 				})
@@ -237,6 +250,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf(rf.me, "AppendEntries %v<-%v current log %v, commitIndex: %v",
+		rf.me, args.LeaderId, rf.log, rf.commitIndex)
 
 	// 异常情况：follower term > leader term，说明leader已经在集群中落后了，返回false
 	// 比如：一个follower刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的
@@ -261,18 +276,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.status = follower
 		rf.currentTerm = args.Term
 		DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v, logs %v", rf.me, rf.status, rf.currentTerm, rf.log)
+		rf.resetElectionSignal <- struct{}{}
+		rf.resetAppendEntriesSignal <- struct{}{}
 	}
 
 	// consistency check：prevLogIndex所在的log entry，它的term不等于prevLogTerm。
 	passCheck := true
 	for loop := true; loop; loop = false {
 		// 原因：虽然follower认为已经committed的log，但整个集群并不认为，所以每次需要leader的overwrite
-		lastCommittedLogIndex, _ := rf.getLastCommittedLogIndexTerm()
-		if lastCommittedLogIndex < args.PrevLogIndex {
+		// Tips 一致性检测 和 leaderCommit 设置没有关系，一致性检测用来 check是否和leader是up-to-date的
+		lastLogIndex := rf.getLastLogIndex()
+		if lastLogIndex < args.PrevLogIndex {
 			// 防止slice越界
 			passCheck = false
 			DPrintf(rf.me, "AppendEntries %v<-%v fail consistency for index. %v < %v",
-				rf.me, args.LeaderId, lastCommittedLogIndex, args.PrevLogIndex)
+				rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex)
 			break
 		}
 
@@ -285,8 +303,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 	}
 
-	reply.Term = rf.currentTerm
 	if passCheck {
+		rf.currentTerm = args.Term
+		reply.Term = rf.currentTerm
+
 		DPrintf(rf.me, "AppendEntries %v<-%v pass consistency check", rf.me, args.LeaderId)
 		reply.Success = true
 
@@ -296,17 +316,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				Command: args.Entries[i].Command,
 				Term:    args.Entries[i].Term,
 			})
+
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      args.Entries[i].Command,
+				CommandIndex: rf.getLastLogIndex(),
+			}
+			rf.lastApplied++
 		}
 
 		// 如果leader commit index > follower 本地存储的 commit index，
 		// 则更新 follower本地的 commitIndex = min(leaderCommit , 将要保存的logs中最后一个log entry index)
-		if args.LeaderCommit > rf.committedIndex {
+		if args.LeaderCommit > rf.commitIndex {
 			// 存在一种情况，follower落后leader很多，这次appendEntries还未补全所有log，
 			// 所以 这次follower的committedIndex为最后一个logIndex
-			rf.committedIndex = min(args.LeaderCommit, rf.getLastLogIndex())
+			rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
 		}
 	} else {
 		reply.Success = false
+		reply.Term = rf.currentTerm
 	}
 
 	rf.resetElectionSignal <- struct{}{}

@@ -49,12 +49,7 @@ func TestInitialElection2A(t *testing.T) {
 
 	cfg.end()
 
-	for i := 0; i < servers; i++ {
-		raft := cfg.rafts[i]
-		raft.mu.Lock()
-		fmt.Printf("Raft %d, log: %v, committedIndex: %d, nextIndex: %v\n", i, raft.log, raft.committedIndex, raft.nextIndex)
-		raft.mu.Unlock()
-	}
+	debugLogInfo(cfg, servers)
 }
 
 func TestReElection2A(t *testing.T) {
@@ -92,12 +87,7 @@ func TestReElection2A(t *testing.T) {
 
 	cfg.end()
 
-	for i := 0; i < servers; i++ {
-		raft := cfg.rafts[i]
-		raft.mu.Lock()
-		fmt.Printf("Raft %d, log: %v, committedIndex: %d, nextIndex: %v\n", i, raft.log, raft.committedIndex, raft.nextIndex)
-		raft.mu.Unlock()
-	}
+	debugLogInfo(cfg, servers)
 }
 
 func TestManyElections2A(t *testing.T) {
@@ -134,13 +124,7 @@ func TestManyElections2A(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	for i := 0; i < servers; i++ {
-		raft := cfg.rafts[i]
-		raft.mu.Lock()
-		fmt.Printf("Raft %d, log: %v, committedIndex: %d, majorityCommittedIndex: %d, nextIndex: %v\n",
-			i, raft.log, raft.committedIndex, raft.majorityCommittedIndex, raft.nextIndex)
-		raft.mu.Unlock()
-	}
+	debugLogInfo(cfg, servers)
 }
 
 func TestBasicAgree2B(t *testing.T) {
@@ -164,6 +148,8 @@ func TestBasicAgree2B(t *testing.T) {
 	}
 
 	cfg.end()
+
+	debugLogInfo(cfg, servers)
 }
 
 //
@@ -199,6 +185,8 @@ func TestRPCBytes2B(t *testing.T) {
 	}
 
 	cfg.end()
+
+	debugLogInfo(cfg, servers)
 }
 
 func TestFailAgree2B(t *testing.T) {
@@ -233,6 +221,8 @@ func TestFailAgree2B(t *testing.T) {
 	cfg.one(107, servers, true)
 
 	cfg.end()
+
+	debugLogInfo(cfg, servers)
 }
 
 func TestFailNoAgree2B(t *testing.T) {
@@ -284,6 +274,8 @@ func TestFailNoAgree2B(t *testing.T) {
 	cfg.one(1000, servers, true)
 
 	cfg.end()
+
+	debugLogInfo(cfg, servers)
 }
 
 func TestConcurrentStarts2B(t *testing.T) {
@@ -1107,4 +1099,14 @@ func TestSnapshotInstallCrash2D(t *testing.T) {
 
 func TestSnapshotInstallUnCrash2D(t *testing.T) {
 	snapcommon(t, "Test (2D): install snapshots (unreliable+crash)", false, false, true)
+}
+
+func debugLogInfo(cfg *config, servers int) {
+	for i := 0; i < servers; i++ {
+		rf := cfg.rafts[i]
+		rf.mu.Lock()
+		fmt.Printf("Raft %d, log:%v, commitIndex:%d, lastApplied:%d, nextIndex:%v, matchIndex:%v\n",
+			i, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+		rf.mu.Unlock()
+	}
 }

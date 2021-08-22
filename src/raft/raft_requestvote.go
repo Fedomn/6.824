@@ -88,8 +88,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 
 		// Tips 注意：从这开始是 多个goroutine 并发修改状态，可能存在时序问题，所以每次操作前 确保前置条件正确
 		go func() {
-			// Tips 注意：这里使用candidate的committedIndex，因为uncommittedIndex不能作为log matching property依据
-			lastLogIndex, lastLogTerm := rf.getLastCommittedLogIndexTerm()
+			lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 			args := &RequestVoteArgs{
 				Term:         rf.getCurrentTermWithLock(),
 				CandidateId:  rf.me,
@@ -143,18 +142,17 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			// 只要有一个follower的term给candidate大，立即revert to follower
 			// 注意：这里rf.getCurrentTerm可能会被其它goroutine修改到，比如rejoin的sever的term更大，它的RPC会将server term修改掉
 			if reply.Term > rf.getCurrentTermWithLock() && reply.VoteGranted == false {
-				if rf.isFollowerWithLock() { // 如果已经在其它goroutine变成了follower，这里就不在处理
-					return
-				}
-				DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-					rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
-				rf.safe(func() {
-					// set currentTerm的目的：明知道当前这个server的term已经落后于集群了，需要尽早追赶上，就直接赋值成reply的term
-					rf.currentTerm = reply.Term
-					rf.status = follower
-					DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
+				onceSetFollower.Do(func() {
+					DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+						rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
+					rf.safe(func() {
+						// set currentTerm的目的：明知道当前这个server的term已经落后于集群了，需要尽早追赶上，就直接赋值成reply的term
+						rf.currentTerm = reply.Term
+						rf.status = follower
+						DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
 
-					rf.resetElectionSignal <- struct{}{}
+						rf.resetElectionSignal <- struct{}{}
+					})
 				})
 				return
 			}
@@ -229,12 +227,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	// 正常情况：follower term < candidate term，说明candidate早于follower，再经过一致性检查通过后，返回true
+	// 正常情况：follower term < candidate term，说明candidate早于follower
 
+	// Election restriction: the leader must eventually store all the committed log entries
+	// The voter denies its vote if its own log is more up-to-date than that of the candidate.
+	// If the logs have last entries with different terms, then the log with the later term is more up-to-date.
+	// If the logs end with the same term, then whichever log is longer is more up-to-date.
 	// 为了保证每个当选的节点都有当前最新的数据，如果节点发现选举节点的日志信息并不比自己更新，将拒绝给这个节点投票
 	passCheck := true
 	for loop := true; loop; loop = false {
-		lastLogIndex, lastLogTerm := rf.getLastCommittedLogIndexTerm()
+		lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 		if args.LastLogTerm < lastLogTerm {
 			passCheck = false
 			DPrintf(rf.me, "RequestVote %v<-%v fail consistency check about term. %v < %v", rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
@@ -248,10 +250,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
-	rf.currentTerm = args.Term
-	reply.Term = rf.currentTerm
-
 	if passCheck {
+		rf.currentTerm = args.Term
+		reply.Term = rf.currentTerm
+
 		DPrintf(rf.me, "RequestVote %v<-%v pass consistency check", rf.me, args.CandidateId)
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
@@ -270,6 +272,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.resetElectionSignal <- struct{}{}
 	} else {
 		reply.VoteGranted = false
+		reply.Term = rf.currentTerm
 	}
 	return
 }

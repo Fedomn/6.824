@@ -89,9 +89,8 @@ type Raft struct {
 	votedFor    int        // voted for candidate's id
 	log         []LogEntry // first index is 1
 
-	majorityCommittedIndex int // 只存在leader上
-	committedIndex         int // 真实的committedIndex = majorityCommittedIndex - 1
-	lastApplied            int
+	commitIndex int
+	lastApplied int
 
 	// for leader
 	nextIndex  []int // 每个peer一个，为leader下次发送的log entry index
@@ -103,12 +102,15 @@ type Raft struct {
 	requestVoteGrantedCnt int
 
 	// for append log entries internal use
-	resetAppendEntriesSignal   chan struct{}
-	appendEntriesCnt        int
-	appendEntriesSuccessCnt int
+	resetAppendEntriesSignal chan struct{}
+	appendEntriesCnt         int
+	appendEntriesSuccessCnt  int
 
 	// for crash and rejoins server 一旦unhealthy，它就不能参与投票 for RequestVote和AppendEntries
 	peersHealthStatus map[int]bool
+
+	// for tester
+	applyCh chan ApplyMsg
 }
 
 // return currentTerm and whether this server believes it is the leader.
@@ -206,7 +208,7 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 		}
 		rf.log = append(rf.log, logEntry)
 
-		index = len(rf.log) - 1 // 因为第一个logEntry是empty
+		index = rf.getLastLogIndex()
 		term = rf.currentTerm
 	})
 
@@ -257,14 +259,14 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf.votedFor = -1
 	rf.log = make([]LogEntry, 0)
 	rf.log = append(rf.log, LogEntry{}) // first empty logEntry
-	rf.majorityCommittedIndex = 0
-	rf.committedIndex = 0
+	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.resetElectionSignal = make(chan struct{})
 	rf.resetAppendEntriesSignal = make(chan struct{})
 	rf.peersHealthStatus = make(map[int]bool)
+	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

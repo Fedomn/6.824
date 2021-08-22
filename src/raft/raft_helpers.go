@@ -14,11 +14,16 @@ func (rf *Raft) getLogEntry(logIndex int) LogEntry {
 	return rf.log[logIndex]
 }
 
+func (rf *Raft) getLastLogIndexTerm() (int, int) {
+	lastIndex := rf.getLastLogIndex()
+	return lastIndex, rf.getLogEntry(lastIndex).Term
+}
+
 // [startIdx, endIdx)
 func (rf *Raft) getEntriesToEnd(startIdx int) []LogEntry {
 	defer func() {
 		if err := recover(); err != nil {
-			DPrintf(rf.me, "Raft %d, log: %v, committedIndex: %d, nextIndex: %v\n", rf.me, rf.log, rf.committedIndex, rf.nextIndex)
+			DPrintf(rf.me, "Raft %d, log: %v, commitIndex: %d, nextIndex: %v\n", rf.me, rf.log, rf.commitIndex, rf.nextIndex)
 			panic(err)
 		}
 	}()
@@ -43,7 +48,7 @@ func (rf *Raft) setLeaderWithLock() {
 	if rf.status != leader {
 		// first convert to leader
 		for i := 0; i < len(rf.peers); i++ {
-			rf.nextIndex[i] = rf.committedIndex + 1
+			rf.nextIndex[i] = rf.commitIndex + 1
 		}
 		DPrintf(rf.me, "Raft %v first convert to %s, will reset nextIndex: %v", rf.me, leader, rf.nextIndex)
 		rf.matchIndex = make([]int, len(rf.peers))
@@ -52,13 +57,12 @@ func (rf *Raft) setLeaderWithLock() {
 		}
 
 		// clean leader uncommitted log entries
-		rf.log = rf.log[:rf.committedIndex+1]
-		rf.majorityCommittedIndex = rf.committedIndex
+		rf.log = rf.log[:rf.commitIndex+1]
 	}
 
 	rf.status = leader
 	DPrintf(rf.me, "Raft %v convert to %s, currentTerm: %v, log: %v, commitIndex: %v, lastApplied: %v",
-		rf.me, leader, rf.currentTerm, rf.log, rf.committedIndex, rf.lastApplied)
+		rf.me, leader, rf.currentTerm, rf.log, rf.commitIndex, rf.lastApplied)
 }
 
 func (rf *Raft) getStatusWithLock() raftStatus {
@@ -71,15 +75,15 @@ func (rf *Raft) getStatusWithLock() raftStatus {
 func (rf *Raft) getLastCommittedLogIndexTerm() (int, int) {
 	defer func() {
 		if err := recover(); err != nil {
-			DPrintf(rf.me, "Raft %d, log: %v, committedIndex: %d, nextIndex: %v\n", rf.me, rf.log, rf.committedIndex, rf.nextIndex)
+			DPrintf(rf.me, "Raft %d, log: %v, commitIndex: %d, nextIndex: %v\n", rf.me, rf.log, rf.commitIndex, rf.nextIndex)
 			panic(err)
 		}
 	}()
 
-	if len(rf.log) <= rf.committedIndex {
-		DPrintf(rf.me, "bug: %v, %v", rf.log, rf.committedIndex)
+	if len(rf.log) <= rf.commitIndex {
+		DPrintf(rf.me, "bug: %v, %v", rf.log, rf.commitIndex)
 	}
-	return rf.committedIndex, rf.log[rf.committedIndex].Term
+	return rf.commitIndex, rf.log[rf.commitIndex].Term
 }
 
 func (rf *Raft) isLeaderWithLock() bool {

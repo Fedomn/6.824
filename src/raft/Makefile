@@ -8,8 +8,8 @@ default: test
 #		go test -run 2A -race > log ; \
 #	done
 
-COUNT = 100
-TEST_NAME = 2A
+COUNT = 10
+TEST_NAME = TestFailNoAgree2B
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
@@ -20,6 +20,7 @@ test: clean
 clean:
 	@rm test-*.log || true
 	@rm tester || true
+	@rm log || true
 
 2B:
 	time go test -run TestBasicAgree2B -race > 2B.log
