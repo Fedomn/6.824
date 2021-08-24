@@ -21,7 +21,7 @@ func (rf *Raft) AppendEntriesTicker() {
 				tickerIsUp <- struct{}{}
 				continue
 			case <-rf.resetAppendEntriesSignal:
-				DPrintf(rf.me, "Raft: %+v will reset append entries timeout", rf.me)
+				TPrintf(rf.me, "Raft: %+v will reset append entries timeout", rf.me)
 				rpcMutex.Lock()
 				if lastRpcCancel != nil {
 					lastRpcCancel()
@@ -78,10 +78,11 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 	rf.safe(func() {
 		if rf.commitIndex == rf.getLastLogIndex() {
 			// 没有uncommitted log entries，则append empty heartbeat
-			DPrintf(rf.me, "AppendEntries no uncommitted log entries")
+			TPrintf(rf.me, "AppendEntries no uncommitted log entries")
 		} else {
-			DPrintf(rf.me, "AppendEntries has uncommitted log entries")
+			TPrintf(rf.me, "AppendEntries has uncommitted log entries")
 		}
+		rf.setNextIndexAndMatchIndex(rf.me, len(rf.getEntriesToEnd(rf.nextIndex[rf.me])))
 	})
 
 	for idx := range rf.peers {
@@ -93,24 +94,14 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			var args *AppendEntriesArgs
 			rf.safe(func() {
 				nextLogEntryIndex := rf.nextIndex[peerIdx]
-				leaderCommitIndex := rf.getLastLogIndex()
-
-				// Tips leader在appendEntries会根据nextIndex，给follower补un-appended log entries
-				// heartbeat只是entries为空的AppendEntries RPC
-				entries := make([]LogEntry, 0)
-
-				entries = append(entries, rf.getEntriesToEnd(nextLogEntryIndex)...)
-
-				prevLogIndex := nextLogEntryIndex - 1
-				prevLogTerm := rf.log[prevLogIndex].Term
 
 				args = &AppendEntriesArgs{
 					Term:         rf.currentTerm,
 					LeaderId:     rf.me,
-					PrevLogIndex: prevLogIndex,
-					PrevLogTerm:  prevLogTerm,
-					Entries:      entries,
-					LeaderCommit: leaderCommitIndex,
+					PrevLogIndex: nextLogEntryIndex - 1,
+					PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
+					Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
+					LeaderCommit: rf.commitIndex,
 				}
 			})
 
@@ -124,7 +115,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			go func() {
 				DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
 				if ok := rf.sendAppendEntries(peerIdx, args, reply); !ok {
-					DPrintf(rf.me, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
+					TPrintf(rf.me, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
 					// 如果server not reply，则直接退出，等待下一轮RPC
 					return
 				}
@@ -135,20 +126,20 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			case <-ctx.Done():
 				rf.safe(func() {
 					// heartbeat time is up，忽略掉当前RPC的reply，直接进入下一轮
-					DPrintf(rf.me, "AppendEntries %v->%v appendEntries timeout, start next appendEntries and mark unhealthy", rf.me, peerIdx)
+					TPrintf(rf.me, "AppendEntries %v->%v appendEntries timeout, start next appendEntries and mark unhealthy", rf.me, peerIdx)
 					rf.peersHealthStatus[peerIdx] = false
 				})
 				return
 			case <-rpcDone:
 				rf.safe(func() {
 					if isHealthy, ok := rf.peersHealthStatus[peerIdx]; ok && !isHealthy {
-						DPrintf(rf.me, "RequestVote %v->%v RPC timeout recover and mark healthy", rf.me, peerIdx)
+						TPrintf(rf.me, "RequestVote %v->%v RPC timeout recover and mark healthy", rf.me, peerIdx)
 					}
 					rf.peersHealthStatus[peerIdx] = true
 				})
 			}
 
-			DPrintf(rf.me, "AppendEntries %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
+			TPrintf(rf.me, "AppendEntries %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
 
 			appendEntriesCnt := 0
 			rf.safe(func() {
@@ -178,13 +169,11 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 					rf.appendEntriesSuccessCnt++
 					appendEntriesSuccessCnt = rf.appendEntriesSuccessCnt
 					if len(args.Entries) == 0 {
-						DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so heartbeat will do nothing",
+						TPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so heartbeat will do nothing",
 							rf.me, peerIdx, len(args.Entries))
 					} else {
-						// FIXME 防止多次append成功的server日志，导致nextIndex溢出
-						rf.nextIndex[peerIdx] = rf.nextIndex[peerIdx] + len(args.Entries)
-						rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx]
-						DPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so will increase nextIndex %v, matchIndex %v",
+						rf.setNextIndexAndMatchIndex(peerIdx, len(args.Entries))
+						TPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so will increase nextIndex %v, matchIndex %v",
 							rf.me, peerIdx, len(args.Entries), rf.nextIndex, rf.matchIndex)
 					}
 				})
@@ -202,30 +191,15 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			if appendEntriesSuccessCnt >= majorityCount {
 				commitOnce.Do(func() {
 					rf.safe(func() {
-						if len(args.Entries) == 0 {
-							DPrintf(rf.me, "AppendEntries %v->%v got majority success, entries len: %v, so will not commit anything",
-								rf.me, peerIdx, len(args.Entries))
-						} else {
-							// FIXME 多个log entries情况下
-							rf.commitIndex = rf.getLastLogIndex()
-							DPrintf(rf.me, "AppendEntries %v->%v got majority success, so commit these log entries", rf.me, peerIdx)
-							DPrintf(rf.me, "AppendEntries %v->%v after commit, commitIndex: %v, log: %v", rf.me, peerIdx, rf.commitIndex, rf.log)
-						}
+						rf.commitIndex = rf.calcCommitIndex()
+						DPrintf(rf.me, "AppendEntries %v->%v got majority success, after calc commitIndex: %v, log: %v, matchIndex: %v",
+							rf.me, peerIdx, rf.commitIndex, rf.log, rf.matchIndex)
 
-						// FIXME -----------------------------------------------
-						// FIXME 因为不能确认当前leader对于的peer是哪个，所以args.Entries可能出现，是落后leader很多的那个peer的logs
 						deltaLogsCount := rf.commitIndex - rf.lastApplied
-						DPrintf(rf.me, "AppendEntries %v->%v will apply %v - %v = delta %v",
-							rf.me, peerIdx, rf.commitIndex, rf.lastApplied, deltaLogsCount)
-
-						for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-							logEntry := rf.getLogEntry(i)
-							rf.applyCh <- ApplyMsg{
-								CommandValid: true,
-								Command:      logEntry.Command,
-								CommandIndex: i,
-							}
-							rf.lastApplied++
+						if deltaLogsCount > 0 {
+							DPrintf(rf.me, "AppendEntries %v->%v will apply %v - %v = delta %v",
+								rf.me, peerIdx, rf.commitIndex, rf.lastApplied, deltaLogsCount)
+							go rf.applyLogs()
 						}
 					})
 				})
@@ -246,7 +220,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	defer DPrintf(rf.me, "AppendEntries %v<-%v reply %+v %+v", rf.me, args.LeaderId, reply, args)
+	defer TPrintf(rf.me, "AppendEntries %v<-%v reply %+v %+v", rf.me, args.LeaderId, reply, args)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -307,7 +281,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm = args.Term
 		reply.Term = rf.currentTerm
 
-		DPrintf(rf.me, "AppendEntries %v<-%v pass consistency check", rf.me, args.LeaderId)
+		TPrintf(rf.me, "AppendEntries %v<-%v pass consistency check", rf.me, args.LeaderId)
 		reply.Success = true
 
 		rf.log = rf.log[:args.PrevLogIndex+1]
@@ -316,13 +290,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				Command: args.Entries[i].Command,
 				Term:    args.Entries[i].Term,
 			})
-
-			rf.applyCh <- ApplyMsg{
-				CommandValid: true,
-				Command:      args.Entries[i].Command,
-				CommandIndex: rf.getLastLogIndex(),
-			}
-			rf.lastApplied++
 		}
 
 		// 如果leader commit index > follower 本地存储的 commit index，
@@ -331,6 +298,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			// 存在一种情况，follower落后leader很多，这次appendEntries还未补全所有log，
 			// 所以 这次follower的committedIndex为最后一个logIndex
 			rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
+			go rf.applyLogs()
 		}
 	} else {
 		reply.Success = false
@@ -340,4 +308,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.resetElectionSignal <- struct{}{}
 	rf.resetAppendEntriesSignal <- struct{}{}
 	return
+}
+
+func (rf *Raft) applyLogs() {
+	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+		rf.applyCh <- ApplyMsg{
+			CommandValid: true,
+			Command:      rf.getLogEntry(i).Command,
+			CommandIndex: i,
+		}
+		rf.lastApplied++
+	}
 }

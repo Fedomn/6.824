@@ -377,6 +377,8 @@ loop:
 	}
 
 	cfg.end()
+
+	debugLogInfo(cfg, servers)
 }
 
 func TestRejoin2B(t *testing.T) {
@@ -415,6 +417,8 @@ func TestRejoin2B(t *testing.T) {
 	cfg.one(105, servers, true)
 
 	cfg.end()
+
+	debugLogInfo(cfg, servers)
 }
 
 func TestBackup2B(t *testing.T) {

@@ -22,7 +22,7 @@ func (rf *Raft) RequestVoteTicker() {
 				tickerIsUp <- struct{}{}
 				continue
 			case <-rf.resetElectionSignal:
-				DPrintf(rf.me, "Raft: %+v will reset election timeout", rf.me)
+				TPrintf(rf.me, "Raft: %+v will reset election timeout", rf.me)
 				rpcMutex.Lock()
 				if lastRpcCancel != nil {
 					lastRpcCancel()
@@ -105,7 +105,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			go func() {
 				DPrintf(rf.me, "RequestVote %v->%v send RPC %+v", rf.me, peerIdx, args)
 				if ok := rf.sendRequestVote(peerIdx, args, reply); !ok {
-					DPrintf(rf.me, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
+					TPrintf(rf.me, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
 					// 如果server not reply，则直接退出，等待下一轮RPC
 					return
 				}
@@ -116,7 +116,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			case <-ctx.Done():
 				rf.safe(func() {
 					// election timeout到了，忽略掉当前RPC的reply，直接进入下一轮
-					DPrintf(rf.me, "RequestVote %v->%v election timeout, start next election and mark unhealthy", rf.me, peerIdx)
+					TPrintf(rf.me, "RequestVote %v->%v election timeout, start next election and mark unhealthy", rf.me, peerIdx)
 					// 因为可能已经有voteGrant的server，并且这些server已经更新了它们的currentTerm=args.Term
 					// 所以为了让下一次election成功，candidate必须要让自己的term+1
 					rf.peersHealthStatus[peerIdx] = false
@@ -125,13 +125,13 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			case <-rpcDone:
 				rf.safe(func() {
 					if isHealthy, ok := rf.peersHealthStatus[peerIdx]; ok && !isHealthy {
-						DPrintf(rf.me, "RequestVote %v->%v RPC timeout recover and mark healthy", rf.me, peerIdx)
+						TPrintf(rf.me, "RequestVote %v->%v RPC timeout recover and mark healthy", rf.me, peerIdx)
 					}
 					rf.peersHealthStatus[peerIdx] = true
 				})
 			}
 
-			DPrintf(rf.me, "RequestVote %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
+			TPrintf(rf.me, "RequestVote %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
 
 			voteCnt := 0
 			rf.safe(func() {
@@ -203,7 +203,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	defer DPrintf(rf.me, "RequestVote %v<-%v reply %+v %+v", rf.me, args.CandidateId, reply, args)
+	defer TPrintf(rf.me, "RequestVote %v<-%v reply %+v %+v", rf.me, args.CandidateId, reply, args)
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -228,6 +229,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// 正常情况：follower term < candidate term，说明candidate早于follower
+	rf.currentTerm = args.Term
+	reply.Term = rf.currentTerm
 
 	// Election restriction: the leader must eventually store all the committed log entries
 	// The voter denies its vote if its own log is more up-to-date than that of the candidate.
@@ -243,7 +246,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			break
 		}
 
-		if args.LastLogIndex < lastLogIndex {
+		if args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex {
 			passCheck = false
 			DPrintf(rf.me, "RequestVote %v<-%v fail consistency check about index. %v < %v", rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
 			break
@@ -251,10 +254,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if passCheck {
-		rf.currentTerm = args.Term
-		reply.Term = rf.currentTerm
-
-		DPrintf(rf.me, "RequestVote %v<-%v pass consistency check", rf.me, args.CandidateId)
+		TPrintf(rf.me, "RequestVote %v<-%v pass election restriction", rf.me, args.CandidateId)
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
 

@@ -45,24 +45,23 @@ func (rf *Raft) setLeaderWithLock() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	if rf.status != leader {
-		// first convert to leader
-		for i := 0; i < len(rf.peers); i++ {
-			rf.nextIndex[i] = rf.commitIndex + 1
-		}
-		DPrintf(rf.me, "Raft %v first convert to %s, will reset nextIndex: %v", rf.me, leader, rf.nextIndex)
-		rf.matchIndex = make([]int, len(rf.peers))
-		for i := 0; i < len(rf.peers); i++ {
-			rf.matchIndex[i] = 0
-		}
-
-		// clean leader uncommitted log entries
-		rf.log = rf.log[:rf.commitIndex+1]
+	for i := 0; i < len(rf.peers); i++ {
+		rf.nextIndex[i] = rf.commitIndex + 1
 	}
+	for i := 0; i < len(rf.peers); i++ {
+		rf.matchIndex[i] = rf.commitIndex
+	}
+	// clean leader uncommitted log entries
+	rf.log = rf.log[:rf.commitIndex+1]
 
 	rf.status = leader
-	DPrintf(rf.me, "Raft %v convert to %s, currentTerm: %v, log: %v, commitIndex: %v, lastApplied: %v",
-		rf.me, leader, rf.currentTerm, rf.log, rf.commitIndex, rf.lastApplied)
+	DPrintf(rf.me, "Raft %v convert to %s, currentTerm:%v, log:%v, commitIndex:%v, lastApplied:%v, nextIndex:%v, matchIndex:%v",
+		rf.me, leader, rf.currentTerm, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+}
+
+func (rf *Raft) setNextIndexAndMatchIndex(peerIdx int, sentEntriesLen int) {
+	rf.nextIndex[peerIdx] = rf.nextIndex[peerIdx] + sentEntriesLen
+	rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx] - 1
 }
 
 func (rf *Raft) getStatusWithLock() raftStatus {
@@ -106,6 +105,26 @@ func (rf *Raft) isFollowerWithLock() bool {
 
 func (rf *Raft) isHeartbeat(args *AppendEntriesArgs) bool {
 	return len(args.Entries) == 0
+}
+
+//If there exists an N such that N > commitIndex, a majority
+//of matchIndex[i] ≥ N, and log[N].term == currentTerm: set commitIndex = N
+func (rf *Raft) calcCommitIndex() int {
+	majorityCount := len(rf.peers)/2 + 1
+
+	for N := rf.getLastLogIndex(); N > rf.commitIndex; N-- {
+		replicatedCnt := 0
+		for i := 0; i < len(rf.peers); i++ {
+			if rf.matchIndex[i] >= N && rf.log[N].Term == rf.currentTerm {
+				replicatedCnt++
+			}
+			if replicatedCnt >= majorityCount {
+				return N
+			}
+		}
+	}
+
+	return rf.commitIndex
 }
 
 func (rf *Raft) safe(fun func()) {

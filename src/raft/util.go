@@ -24,8 +24,8 @@ var colorMap = map[int]func(format string, a ...interface{}) string{
 	6: color.WhiteString,
 
 	7:  color.HiRedString,
-	8: color.HiGreenString,
-	9: color.HiYellowString,
+	8:  color.HiGreenString,
+	9:  color.HiYellowString,
 	10: color.HiBlueString,
 	11: color.HiMagentaString,
 	12: color.HiCyanString,
@@ -34,6 +34,7 @@ var colorMap = map[int]func(format string, a ...interface{}) string{
 
 // Debugging
 const Debug = true
+const Trace = false
 
 func DPrintf(rfme int, format string, a ...interface{}) {
 	if Debug {
@@ -41,4 +42,11 @@ func DPrintf(rfme int, format string, a ...interface{}) {
 		gLog.Println(colorMap[rfme](prefix+format, a...))
 	}
 	return
+}
+
+func TPrintf(rfme int, format string, a ...interface{}) {
+	if Trace {
+		prefix := fmt.Sprintf("[%d] ", rfme)
+		gLog.Println(colorMap[rfme](prefix+format, a...))
+	}
 }

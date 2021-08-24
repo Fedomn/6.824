@@ -9,7 +9,9 @@ default: test
 #	done
 
 COUNT = 10
-TEST_NAME = TestFailNoAgree2B
+#TEST_NAME = "TestConcurrentStarts2B|TestRejoin2B"
+#TEST_NAME = "TestBasicAgree2B|TestFailAgree2B|TestFailNoAgree2B"
+TEST_NAME = "TestBackup2B"
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
