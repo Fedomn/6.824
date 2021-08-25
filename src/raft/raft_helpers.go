@@ -1,5 +1,7 @@
 package raft
 
+import "fmt"
+
 func (rf *Raft) getCurrentTermWithLock() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -125,6 +127,16 @@ func (rf *Raft) calcCommitIndex() int {
 	}
 
 	return rf.commitIndex
+}
+
+func (rf *Raft) getFirstIndexOfTerm(foundTerm int) int {
+	for i := 0; i < len(rf.log)-1; i++ {
+		if rf.log[i].Term == foundTerm {
+			DPrintf(rf.me, "foundTerm:%v, got:%v", foundTerm, i)
+			return i
+		}
+	}
+	panic(fmt.Sprintf("not found first index of term %v", foundTerm))
 }
 
 func (rf *Raft) safe(fun func()) {

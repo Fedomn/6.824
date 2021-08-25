@@ -8,10 +8,10 @@ default: test
 #		go test -run 2A -race > log ; \
 #	done
 
-COUNT = 10
+COUNT = 16
 #TEST_NAME = "TestConcurrentStarts2B|TestRejoin2B"
 #TEST_NAME = "TestBasicAgree2B|TestFailAgree2B|TestFailNoAgree2B"
-TEST_NAME = "TestBackup2B"
+TEST_NAME = "2A|2B"
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}

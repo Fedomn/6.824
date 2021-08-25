@@ -86,7 +86,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 		}
 		peerIdx := idx
 
-		// Tips 注意：从这开始是 多个goroutine 并发修改状态，可能存在时序问题，所以每次操作前 确保前置条件正确
+		// 注意：从这开始是 多个goroutine 并发修改状态，可能存在时序问题，所以每次操作前 确保前置条件正确
 		go func() {
 			lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 			args := &RequestVoteArgs{
@@ -208,9 +208,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	// 异常情况：follower term > candidate term，说明candidate已经在集群中落后了，返回false
+	// 异常情况：candidate last log term < follower term ，说明candidate已经在集群中落后了，返回false
 	// 比如：一个follower刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的
-	if rf.currentTerm > args.Term {
+	if args.Term < rf.currentTerm {
 		DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v > term %v, ignore lower term", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -220,7 +220,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// edge case：比如，上一个term的follower在当前term才从crash中recover，则它刚好start election，将上一个term+1，就是当前这个Raft函数
 	// 这时有个candidate向它发送RequestVote，刚好term相等，则不应该vote。
 	// 或者 比如：刚好2个follower在同一时间start election，互相发送了RequestVote RPC，这种情况下不应该 vote
-	if rf.currentTerm == args.Term {
+	if args.Term == rf.currentTerm {
 		// 这一条，也保证了vote for first ask candidate，因为第一个ask的candidate已经将argsTerm复制给了当前raft的currentTerm
 		DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v == term %v, already votedFor %v", rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
 		reply.Term = rf.currentTerm
@@ -228,7 +228,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	// 正常情况：follower term < candidate term，说明candidate早于follower
+	// 正常情况：candidate last log term > follower term，说明candidate早于follower
 	rf.currentTerm = args.Term
 	reply.Term = rf.currentTerm
 
@@ -242,13 +242,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 		if args.LastLogTerm < lastLogTerm {
 			passCheck = false
-			DPrintf(rf.me, "RequestVote %v<-%v fail consistency check about term. %v < %v", rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
+			DPrintf(rf.me, "RequestVote %v<-%v fail election restriction check about term. %v < %v", rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
 			break
 		}
 
 		if args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex {
 			passCheck = false
-			DPrintf(rf.me, "RequestVote %v<-%v fail consistency check about index. %v < %v", rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
+			DPrintf(rf.me, "RequestVote %v<-%v fail election restriction check about index when same term. %v < %v", rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
 			break
 		}
 	}
@@ -257,23 +257,24 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		TPrintf(rf.me, "RequestVote %v<-%v pass election restriction", rf.me, args.CandidateId)
 		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
-
-		// Tips 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
-		// 则它要立即 revert to follower
-		if rf.status != follower {
-			DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-				rf.me, args.CandidateId, rf.status, rf.currentTerm, reply.Term)
-			rf.status = follower
-			DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
-		}
-
-		// Tips 在grant vote后，需要立即reset自己的election timeout，防止leader还未发送heartbeats，自己election timeout到了
-		// 从而导致 higher term会在下次 election中当选
-		rf.resetElectionSignal <- struct{}{}
 	} else {
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
 	}
+
+	// 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
+	// 则它要立即 revert to follower
+	if rf.status != follower {
+		DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+			rf.me, args.CandidateId, rf.status, rf.currentTerm, reply.Term)
+		rf.status = follower
+		DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
+	}
+
+	// 在grant vote后，需要立即reset自己的election timeout，防止leader还未发送heartbeats，自己election timeout到了
+	// 从而导致 higher term会在下次 election中当选
+	rf.resetElectionSignal <- struct{}{}
+
 	return
 }
 

@@ -23,16 +23,16 @@ type LogEntry struct {
 }
 
 type AppendEntriesArgs struct {
-	Term         int           // leader's term
-	LeaderId     int           // leader id
-	PrevLogIndex int           // index of log entry preceding the following entries
-	PrevLogTerm  int           // term of pervLogIndex log entry
+	Term         int        // leader's term
+	LeaderId     int        // leader id
+	PrevLogIndex int        // index of log entry preceding the following entries
+	PrevLogTerm  int        // term of pervLogIndex log entry
 	Entries      []LogEntry // log entries to store (empty for heartbeat)
-	LeaderCommit int           // leader commit index
+	LeaderCommit int        // leader commit index
 }
 
 type AppendEntriesReply struct {
-	Term    int  // replied server's term
-	Success bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
-
+	Term          int  // replied server's term
+	Success       bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
+	ConflictIndex int
 }

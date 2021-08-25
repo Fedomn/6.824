@@ -491,6 +491,8 @@ func TestBackup2B(t *testing.T) {
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()
+
+	debugLogInfo(cfg, servers)
 }
 
 func TestCount2B(t *testing.T) {

@@ -179,8 +179,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 				})
 			} else {
 				rf.safe(func() {
-					// TODO optimization
-					rf.nextIndex[peerIdx]--
+					rf.nextIndex[peerIdx] = reply.ConflictIndex
 					DPrintf(rf.me, "AppendEntries %v->%v RPC got false, so will decrease nextIndex and append again, %v",
 						rf.me, peerIdx, rf.nextIndex)
 				})
@@ -258,21 +257,28 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	passCheck := true
 	for loop := true; loop; loop = false {
 		// 原因：虽然follower认为已经committed的log，但整个集群并不认为，所以每次需要leader的overwrite
-		// Tips 一致性检测 和 leaderCommit 设置没有关系，一致性检测用来 check是否和leader是up-to-date的
+		// 一致性检测 和 leaderCommit 设置没有关系，一致性检测用来 check是否和leader是up-to-date的
 		lastLogIndex := rf.getLastLogIndex()
 		if lastLogIndex < args.PrevLogIndex {
 			// 防止slice越界
 			passCheck = false
-			DPrintf(rf.me, "AppendEntries %v<-%v fail consistency for index. %v < %v",
-				rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex)
+			reply.ConflictIndex = lastLogIndex
+			DPrintf(rf.me, "AppendEntries %v<-%v fail consistency for index. %v < %v, conflictIndex:%v",
+				rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex, reply.ConflictIndex)
 			break
 		}
+
+		// Optimization: when rejecting an AppendEntries request, the follower can include the term of
+		// the conflicting entry and the first index it stores for that term.
+		// With this information, the leader can decrement nextIndex to bypass all the conflicting entries in that term
+		// one AppendEntries RPC will be required for each term with conflicting entries, rather than one RPC per entry
 
 		matchedIndexLogTerm := rf.getLogEntry(args.PrevLogIndex).Term
 		if matchedIndexLogTerm != args.PrevLogTerm {
 			passCheck = false
-			DPrintf(rf.me, "AppendEntries %v<-%v fail consistency for term. %v != %v",
-				rf.me, args.LeaderId, matchedIndexLogTerm, args.PrevLogTerm)
+			reply.ConflictIndex = rf.getFirstIndexOfTerm(matchedIndexLogTerm)
+			DPrintf(rf.me, "AppendEntries %v<-%v fail consistency for term. %v != %v, conflictIndex:%v",
+				rf.me, args.LeaderId, matchedIndexLogTerm, args.PrevLogTerm, reply.ConflictIndex)
 			break
 		}
 	}
