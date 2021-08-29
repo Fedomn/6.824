@@ -2,6 +2,30 @@ package raft
 
 import "fmt"
 
+// None is a placeholder node ID used when there is no leader.
+const None int = 0
+
+type StateType int
+
+const (
+	StateFollower StateType = iota
+	StateCandidate
+	StateLeader
+)
+
+func (r StateType) String() string {
+	switch r {
+	case StateFollower:
+		return "follower"
+	case StateCandidate:
+		return "candidate"
+	case StateLeader:
+		return "leader"
+	default:
+		return "unknown"
+	}
+}
+
 func (rf *Raft) getCurrentTermWithLock() int {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -36,29 +60,11 @@ func (rf *Raft) getEntriesFromStartTo(endIdx int) []LogEntry {
 	return rf.log[:endIdx+1]
 }
 
-func (rf *Raft) setStatusWithLock(status raftStatus) {
+func (rf *Raft) setStatusWithLock(status StateType) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.status = status
+	rf.state = status
 	DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, status, rf.currentTerm)
-}
-
-func (rf *Raft) setLeaderWithLock() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	for i := 0; i < len(rf.peers); i++ {
-		rf.nextIndex[i] = rf.commitIndex + 1
-	}
-	for i := 0; i < len(rf.peers); i++ {
-		rf.matchIndex[i] = rf.commitIndex
-	}
-	// clean leader uncommitted log entries
-	rf.log = rf.log[:rf.commitIndex+1]
-
-	rf.status = leader
-	DPrintf(rf.me, "Raft %v convert to %s, currentTerm:%v, log:%v, commitIndex:%v, lastApplied:%v, nextIndex:%v, matchIndex:%v",
-		rf.me, leader, rf.currentTerm, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
 }
 
 func (rf *Raft) setNextIndexAndMatchIndex(peerIdx int, sentEntriesLen int) {
@@ -66,47 +72,22 @@ func (rf *Raft) setNextIndexAndMatchIndex(peerIdx int, sentEntriesLen int) {
 	rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx] - 1
 }
 
-func (rf *Raft) getStatusWithLock() raftStatus {
+func (rf *Raft) getStatusWithLock() StateType {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.status
-}
-
-// 只看committed的log
-func (rf *Raft) getLastCommittedLogIndexTerm() (int, int) {
-	defer func() {
-		if err := recover(); err != nil {
-			DPrintf(rf.me, "Raft %d, log: %v, commitIndex: %d, nextIndex: %v\n", rf.me, rf.log, rf.commitIndex, rf.nextIndex)
-			panic(err)
-		}
-	}()
-
-	if len(rf.log) <= rf.commitIndex {
-		DPrintf(rf.me, "bug: %v, %v", rf.log, rf.commitIndex)
-	}
-	return rf.commitIndex, rf.log[rf.commitIndex].Term
+	return rf.state
 }
 
 func (rf *Raft) isLeaderWithLock() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.status == leader
+	return rf.state == StateLeader
 }
 
 func (rf *Raft) isCandidateWithLock() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.status == candidate
-}
-
-func (rf *Raft) isFollowerWithLock() bool {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.status == follower
-}
-
-func (rf *Raft) isHeartbeat(args *AppendEntriesArgs) bool {
-	return len(args.Entries) == 0
+	return rf.state == StateCandidate
 }
 
 //If there exists an N such that N > commitIndex, a majority
@@ -137,6 +118,90 @@ func (rf *Raft) getFirstIndexOfTerm(foundTerm int) int {
 		}
 	}
 	panic(fmt.Sprintf("not found first index of term %v", foundTerm))
+}
+
+func (rf *Raft) becomeFollower(term int, lead int) {
+	rf.reset(term)
+	rf.state = StateFollower
+
+	rf.resetElectionSignal <- struct{}{}
+	rf.resetAppendEntriesSignal <- struct{}{}
+	DPrintf(rf.me, "Raft %v became follower at term %v", rf.me, rf.currentTerm)
+}
+
+func (rf *Raft) becomeCandidate() {
+	if rf.state == StateLeader {
+		panic("invalid transition [leader -> candidate]")
+	}
+	rf.reset(rf.currentTerm + 1)
+	rf.state = StateCandidate
+	rf.votedFor = rf.me
+
+	// reset 计数器 include candidate itself
+	rf.requestVoteCnt = 1
+	rf.requestVoteGrantedCnt = 1
+	DPrintf(rf.me, "Raft %v became candidate at term %v", rf.me, rf.currentTerm)
+}
+
+func (rf *Raft) becomeLeader() {
+	if rf.state == StateFollower {
+		panic("invalid transition [follower -> leader]")
+	}
+	rf.reset(rf.currentTerm)
+	rf.state = StateLeader
+
+	for i := 0; i < len(rf.peers); i++ {
+		rf.nextIndex[i] = rf.commitIndex + 1
+	}
+	for i := 0; i < len(rf.peers); i++ {
+		rf.matchIndex[i] = 0
+	}
+
+	// FIXME
+	// clean leader uncommitted log entries
+	// rf.log = rf.log[:rf.commitIndex+1]
+	// reset计数器
+	rf.appendEntriesCnt = 1
+	rf.appendEntriesSuccessCnt = 1
+
+	DPrintf(rf.me, "Raft %v became leader at term %v, "+
+		"commitIndex:%v, lastApplied:%v, nextIndex:%v, matchIndex:%v, log:%v",
+		rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex, rf.log)
+}
+
+func (rf *Raft) isEncounterSplitVoteWithLock() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	majorityCount := len(rf.peers)/2 + 1
+	return rf.requestVoteCnt == len(rf.peers) && rf.requestVoteGrantedCnt < majorityCount
+}
+
+func (rf *Raft) isGotMajorityVoteWithLock() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	majorityCount := len(rf.peers)/2 + 1
+	return rf.requestVoteGrantedCnt >= majorityCount
+}
+
+func (rf *Raft) isEncounterPartitionWithLock() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	majorityCount := len(rf.peers)/2 + 1
+	return rf.appendEntriesCnt == len(rf.peers) && rf.appendEntriesSuccessCnt < majorityCount
+}
+
+func (rf *Raft) isGotMajorityAppendSuccessWithLock() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	majorityCount := len(rf.peers)/2 + 1
+	return rf.appendEntriesSuccessCnt >= majorityCount
+}
+
+func (rf *Raft) reset(term int) {
+	if rf.currentTerm != term {
+		rf.currentTerm = term
+		rf.votedFor = None
+	}
 }
 
 func (rf *Raft) safe(fun func()) {

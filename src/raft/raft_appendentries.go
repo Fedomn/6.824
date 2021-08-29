@@ -61,16 +61,9 @@ func (rf *Raft) AppendEntriesTicker() {
 }
 
 func (rf *Raft) startAppendEntries(ctx context.Context) {
-	if rf.getStatusWithLock() != leader {
+	if rf.getStatusWithLock() != StateLeader {
 		return
 	}
-
-	// reset 计数器
-	rf.safe(func() {
-		// include leader itself
-		rf.appendEntriesCnt = 1
-		rf.appendEntriesSuccessCnt = 1
-	})
 
 	commitOnce := sync.Once{}
 	onceSetFollower := sync.Once{}
@@ -141,33 +134,22 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 
 			TPrintf(rf.me, "AppendEntries %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
 
-			appendEntriesCnt := 0
 			rf.safe(func() {
 				rf.appendEntriesCnt++
-				appendEntriesCnt = rf.appendEntriesCnt
 			})
 
 			if reply.Term > rf.getCurrentTermWithLock() && reply.Success == false {
 				onceSetFollower.Do(func() {
 					DPrintf(rf.me, "AppendEntries %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
 						rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
-					rf.safe(func() {
-						rf.currentTerm = reply.Term
-						rf.status = follower
-						DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v, logs %v", rf.me, rf.status, rf.currentTerm, rf.log)
-
-						rf.resetElectionSignal <- struct{}{}
-						rf.resetAppendEntriesSignal <- struct{}{}
-					})
+					rf.becomeFollower(reply.Term, None)
 				})
 				return
 			}
 
-			appendEntriesSuccessCnt := 0
 			if reply.Success {
 				rf.safe(func() {
 					rf.appendEntriesSuccessCnt++
-					appendEntriesSuccessCnt = rf.appendEntriesSuccessCnt
 					if len(args.Entries) == 0 {
 						TPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so heartbeat will do nothing",
 							rf.me, peerIdx, len(args.Entries))
@@ -186,8 +168,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 				return
 			}
 
-			majorityCount := len(rf.peers)/2 + 1
-			if appendEntriesSuccessCnt >= majorityCount {
+			if rf.isGotMajorityAppendSuccessWithLock() {
 				commitOnce.Do(func() {
 					rf.safe(func() {
 						rf.commitIndex = rf.calcCommitIndex()
@@ -205,7 +186,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 				return
 			}
 
-			if appendEntriesCnt >= majorityCount {
+			if rf.isEncounterPartitionWithLock() {
 				DPrintf(rf.me, "AppendEntries %v->%v can't got majority success, will retry", rf.me, peerIdx)
 				return
 			}
@@ -241,16 +222,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// Do nothing 正常情况
 	}
 
-	// Tips 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
+	// 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
 	// 则它要立即 revert to follower
-	if rf.status != follower {
+	if rf.state != StateFollower {
 		DPrintf(rf.me, "AppendEntries %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-			rf.me, args.LeaderId, rf.status, rf.currentTerm, args.Term)
-		rf.status = follower
-		rf.currentTerm = args.Term
-		DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v, logs %v", rf.me, rf.status, rf.currentTerm, rf.log)
-		rf.resetElectionSignal <- struct{}{}
-		rf.resetAppendEntriesSignal <- struct{}{}
+			rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
+		rf.becomeFollower(args.Term, None)
 	}
 
 	// consistency check：prevLogIndex所在的log entry，它的term不等于prevLogTerm。

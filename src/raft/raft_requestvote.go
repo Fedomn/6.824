@@ -57,23 +57,14 @@ func (rf *Raft) RequestVoteTicker() {
 }
 
 func (rf *Raft) startRequestVote(ctx context.Context) {
-	if rf.getStatusWithLock() == leader {
+	// 空转
+	if rf.getStatusWithLock() == StateLeader {
 		return
 	}
 
-	// reset 计数器
-	rf.safe(func() {
-		// include candidate itself
-		rf.requestVoteCnt = 1
-		rf.requestVoteGrantedCnt = 1
-	})
-
 	// Step 1: 准备election需要数据
 	rf.safe(func() {
-		rf.currentTerm++
-		rf.status = candidate
-		DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
-		rf.votedFor = rf.me
+		rf.becomeCandidate()
 	})
 
 	onceSetLeader := sync.Once{}
@@ -133,10 +124,8 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 
 			TPrintf(rf.me, "RequestVote %v->%v RPC got %+v %+v", rf.me, peerIdx, reply, args)
 
-			voteCnt := 0
 			rf.safe(func() {
 				rf.requestVoteCnt++
-				voteCnt = rf.requestVoteCnt
 			})
 
 			// 只要有一个follower的term给candidate大，立即revert to follower
@@ -147,48 +136,40 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 						rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
 					rf.safe(func() {
 						// set currentTerm的目的：明知道当前这个server的term已经落后于集群了，需要尽早追赶上，就直接赋值成reply的term
-						rf.currentTerm = reply.Term
-						rf.status = follower
-						DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
-
-						rf.resetElectionSignal <- struct{}{}
+						rf.becomeFollower(reply.Term, None)
 					})
 				})
 				return
 			}
 
-			voteGrantedCnt := 0
 			if reply.VoteGranted {
 				rf.safe(func() {
 					rf.requestVoteGrantedCnt++
-					voteGrantedCnt = rf.requestVoteGrantedCnt
 				})
 			}
 
-			majorityCount := len(rf.peers)/2 + 1
-
-			if voteGrantedCnt >= majorityCount {
-				if rf.isCandidateWithLock() {
-					onceSetLeader.Do(func() {
-						DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
-						rf.setLeaderWithLock()
-						// Tips bug 不加以下代码，存在可能性选不出leader，同时 需要防止多发了一次，需要加reset heartbeat chan
-						go rf.startAppendEntries(context.Background()) // send heartbeat immediately
-						rf.resetAppendEntriesSignal <- struct{}{}
+			if rf.isGotMajorityVoteWithLock() {
+				onceSetLeader.Do(func() {
+					DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
+					rf.safe(func() {
+						rf.becomeLeader()
 					})
-				}
+
+					// 不加以下代码，存在可能性选不出leader，同时 需要防止多发了一次，需要加reset heartbeat chan
+					go rf.startAppendEntries(context.Background()) // send heartbeat immediately
+					rf.resetAppendEntriesSignal <- struct{}{}
+				})
 				return
 			}
 
 			// 走到这里说明 已经RequestVote给到了majority的server，但没有得到voteGrant，所以增加term，再开始election
 			// 注意：此时会revert to follower，等待election timeout在变成candidate
-			if voteCnt >= majorityCount {
+			// 可能存在刚好，前面的majority-1都是false，后面都是true的情况
+			if rf.isEncounterSplitVoteWithLock() {
 				onceSetFollower.Do(func() {
 					rf.safe(func() {
 						DPrintf(rf.me, "RequestVote %v->%v may encounter split vote, so revert to follower and wait next election", rf.me, peerIdx)
-						rf.status = follower
-						DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
-						rf.resetElectionSignal <- struct{}{}
+						rf.becomeFollower(rf.currentTerm, None)
 					})
 				})
 				return
@@ -264,11 +245,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	// 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
 	// 则它要立即 revert to follower
-	if rf.status != follower {
+	if rf.state != StateFollower {
 		DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-			rf.me, args.CandidateId, rf.status, rf.currentTerm, reply.Term)
-		rf.status = follower
-		DPrintf(rf.me, "Raft %v convert to %s, currentTerm %v", rf.me, rf.status, rf.currentTerm)
+			rf.me, args.CandidateId, rf.state, rf.currentTerm, reply.Term)
+		rf.becomeFollower(args.Term, None)
 	}
 
 	// 在grant vote后，需要立即reset自己的election timeout，防止leader还未发送heartbeats，自己election timeout到了

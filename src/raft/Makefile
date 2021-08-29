@@ -8,7 +8,7 @@ default: test
 #		go test -run 2A -race > log ; \
 #	done
 
-COUNT = 16
+COUNT = 64
 #TEST_NAME = "TestConcurrentStarts2B|TestRejoin2B"
 #TEST_NAME = "TestBasicAgree2B|TestFailAgree2B|TestFailNoAgree2B"
 TEST_NAME = "2A|2B"

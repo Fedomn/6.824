@@ -48,27 +48,6 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
-type raftStatus int
-
-const (
-	follower raftStatus = iota
-	candidate
-	leader
-)
-
-func (r raftStatus) String() string {
-	switch r {
-	case follower:
-		return "follower"
-	case candidate:
-		return "candidate"
-	case leader:
-		return "leader"
-	default:
-		return "unknown"
-	}
-}
-
 //
 // A Go object implementing a single Raft peer.
 //
@@ -83,7 +62,7 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	status raftStatus
+	state StateType
 
 	currentTerm int
 	votedFor    int        // voted for candidate's id
@@ -117,7 +96,7 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	return rf.currentTerm, rf.status == leader
+	return rf.currentTerm, rf.state == StateLeader
 }
 
 //
@@ -254,7 +233,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-	rf.status = follower
+	rf.state = StateFollower
 	rf.currentTerm = 0
 	rf.votedFor = -1
 	rf.log = make([]LogEntry, 0)
