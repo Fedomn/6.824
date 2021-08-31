@@ -65,8 +65,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 		return
 	}
 
-	commitOnce := sync.Once{}
-	onceSetFollower := sync.Once{}
+	onceState := sync.Once{}
 
 	rf.safe(func() {
 		if rf.commitIndex == rf.getLastLogIndex() {
@@ -100,6 +99,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 
 			reply := &AppendEntriesReply{}
 
+			// FIXME ?
 			if !rf.isLeaderWithLock() {
 				return
 			}
@@ -139,10 +139,12 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			})
 
 			if reply.Term > rf.getCurrentTermWithLock() && reply.Success == false {
-				onceSetFollower.Do(func() {
-					DPrintf(rf.me, "AppendEntries %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-						rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
-					rf.becomeFollower(reply.Term, None)
+				onceState.Do(func() {
+					rf.safe(func() {
+						DPrintf(rf.me, "AppendEntries %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+							rf.me, peerIdx, rf.state, rf.currentTerm, reply.Term)
+						rf.becomeFollower(reply.Term, None)
+					})
 				})
 				return
 			}
@@ -169,7 +171,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 			}
 
 			if rf.isGotMajorityAppendSuccessWithLock() {
-				commitOnce.Do(func() {
+				onceState.Do(func() {
 					rf.safe(func() {
 						rf.commitIndex = rf.calcCommitIndex()
 						DPrintf(rf.me, "AppendEntries %v->%v got majority success, after calc commitIndex: %v, log: %v, matchIndex: %v",
@@ -207,10 +209,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	DPrintf(rf.me, "AppendEntries %v<-%v current log %v, commitIndex: %v",
 		rf.me, args.LeaderId, rf.log, rf.commitIndex)
 
-	// 异常情况：follower term > leader term，说明leader已经在集群中落后了，返回false
-	// 比如：一个follower刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的
-	if rf.currentTerm > args.Term {
-		DPrintf(rf.me, "AppendEntries %v<-%v currentTerm %v > term %v", rf.me, args.LeaderId, rf.currentTerm, args.Term)
+	// 异常情况：leader term < follower term，说明leader已经在集群中落后了，返回false
+	// 比如：一个leader刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的
+	if args.Term < rf.currentTerm {
+		DPrintf(rf.me, "AppendEntries %v<-%v currentTerm %v > term %v, ignore lower term",
+			rf.me, args.LeaderId, rf.currentTerm, args.Term)
 		reply.Term = rf.currentTerm
 		reply.Success = false
 		return
@@ -218,12 +221,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 这里不像RequestVote必须要求args.Term > rf.currentTerm，因为AppendEntries会作为heartbeats保持
 	// 所以rf.currentTerm需要保持和leader发来的args.Term一致
-	if rf.currentTerm == args.Term {
+	if args.Term == rf.currentTerm {
 		// Do nothing 正常情况
 	}
 
+	// 正常情况：leader term > follower term
+	// args.Term > rf.currentTerm
+
 	// 如果一个非follower状态的server，走到了这一步，说明集群中出现了 更新的server
 	// 则它要立即 revert to follower
+	// 变为leader后，继续做consistency check，像一个普通的follower一样
 	if rf.state != StateFollower {
 		DPrintf(rf.me, "AppendEntries %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
 			rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
@@ -236,7 +243,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 原因：虽然follower认为已经committed的log，但整个集群并不认为，所以每次需要leader的overwrite
 		// 一致性检测 和 leaderCommit 设置没有关系，一致性检测用来 check是否和leader是up-to-date的
 		lastLogIndex := rf.getLastLogIndex()
-		if lastLogIndex < args.PrevLogIndex {
+		if args.PrevLogIndex > lastLogIndex {
 			// 防止slice越界
 			passCheck = false
 			reply.ConflictIndex = lastLogIndex

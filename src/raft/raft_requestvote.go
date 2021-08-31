@@ -67,8 +67,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 		rf.becomeCandidate()
 	})
 
-	onceSetLeader := sync.Once{}
-	onceSetFollower := sync.Once{}
+	onceState := sync.Once{}
 
 	// Step 2: 发送RequestVote RPC 并根据reply决定是升级leader还是降为follower
 	for idx := range rf.peers {
@@ -88,6 +87,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			}
 			reply := &RequestVoteReply{}
 
+			// FIXME ?
 			if !rf.isCandidateWithLock() {
 				return
 			}
@@ -131,10 +131,10 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			// 只要有一个follower的term给candidate大，立即revert to follower
 			// 注意：这里rf.getCurrentTerm可能会被其它goroutine修改到，比如rejoin的sever的term更大，它的RPC会将server term修改掉
 			if reply.Term > rf.getCurrentTermWithLock() && reply.VoteGranted == false {
-				onceSetFollower.Do(func() {
-					DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-						rf.me, peerIdx, rf.getStatusWithLock(), rf.getCurrentTermWithLock(), reply.Term)
+				onceState.Do(func() {
 					rf.safe(func() {
+						DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+							rf.me, peerIdx, rf.state, rf.currentTerm, reply.Term)
 						// set currentTerm的目的：明知道当前这个server的term已经落后于集群了，需要尽早追赶上，就直接赋值成reply的term
 						rf.becomeFollower(reply.Term, None)
 					})
@@ -149,9 +149,9 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			}
 
 			if rf.isGotMajorityVoteWithLock() {
-				onceSetLeader.Do(func() {
-					DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
+				onceState.Do(func() {
 					rf.safe(func() {
+						DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
 						rf.becomeLeader()
 					})
 
@@ -166,7 +166,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 			// 注意：此时会revert to follower，等待election timeout在变成candidate
 			// 可能存在刚好，前面的majority-1都是false，后面都是true的情况
 			if rf.isEncounterSplitVoteWithLock() {
-				onceSetFollower.Do(func() {
+				onceState.Do(func() {
 					rf.safe(func() {
 						DPrintf(rf.me, "RequestVote %v->%v may encounter split vote, so revert to follower and wait next election", rf.me, peerIdx)
 						rf.becomeFollower(rf.currentTerm, None)
