@@ -2,25 +2,25 @@
 
 default: test
 
-#LOOPS = 100
-#2A:
-#	for ((i=1; i <= ${LOOPS}; ++i)) ; do \
-#		go test -run 2A -race > log ; \
-#	done
-
 COUNT = 200
 #TEST_NAME = "TestConcurrentStarts2B|TestRejoin2B"
 #TEST_NAME = "TestBasicAgree2B|TestFailAgree2B|TestFailNoAgree2B"
 TEST_NAME = "2A|2B"
+#TEST_NAME = "TestBackup2B"
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
 
-2A-count:
-	go test -run TestReElection2A -race -failfast -count 1 > log
+#testrace: clean
+#	for ((i=1; i <= ${COUNT}; ++i)) ; do \
+#		go test -run ${TEST_NAME} -race -failfast -count ${COUNT} > testrace.log ; \
+#	done
+
+testrace: clean
+	go test -run ${TEST_NAME} -race -failfast -count 100 > testrace.log
 
 clean:
-	@rm test-*.log || true
+	@rm *.log || true
 	@rm tester || true
 	@rm log || true
 

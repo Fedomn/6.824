@@ -181,7 +181,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 						if deltaLogsCount > 0 {
 							DPrintf(rf.me, "AppendEntries %v->%v will apply %v - %v = delta %v",
 								rf.me, peerIdx, rf.commitIndex, rf.lastApplied, deltaLogsCount)
-							go rf.applyLogs()
+							go rf.applyLogsWithLock()
 						}
 					})
 				})
@@ -288,7 +288,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			// 存在一种情况，follower落后leader很多，这次appendEntries还未补全所有log，
 			// 所以 这次follower的committedIndex为最后一个logIndex
 			rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
-			go rf.applyLogs()
+			go rf.applyLogsWithLock()
 		}
 	} else {
 		reply.Success = false
@@ -300,7 +300,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	return
 }
 
-func (rf *Raft) applyLogs() {
+func (rf *Raft) applyLogsWithLock() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 		rf.applyCh <- ApplyMsg{
 			CommandValid: true,

@@ -78,6 +78,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 
 		// 注意：从这开始是 多个goroutine 并发修改状态，可能存在时序问题，所以每次操作前 确保前置条件正确
 		go func() {
+			// FIXME data race
 			lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 			args := &RequestVoteArgs{
 				Term:         rf.getCurrentTermWithLock(),
