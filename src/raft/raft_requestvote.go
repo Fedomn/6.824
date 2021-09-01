@@ -155,6 +155,7 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 				onceState.Do(func() {
 					rf.safe(func() {
 						DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
+						// FIXME 和 RequestVote里becomeFollower方法存在 并发问题
 						rf.becomeLeader()
 					})
 

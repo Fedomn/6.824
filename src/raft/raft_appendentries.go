@@ -91,6 +91,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 					Term:         rf.currentTerm,
 					LeaderId:     rf.me,
 					PrevLogIndex: nextLogEntryIndex - 1,
+					// FIXME index out of range [103] with length 103
 					PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
 					Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
 					LeaderCommit: rf.commitIndex,
