@@ -274,13 +274,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		TPrintf(rf.me, "AppendEntries %v<-%v pass consistency check", rf.me, args.LeaderId)
 		reply.Success = true
 
-		rf.log = rf.log[:args.PrevLogIndex+1]
-		for i := range args.Entries {
-			rf.log = append(rf.log, LogEntry{
-				Command: args.Entries[i].Command,
-				Term:    args.Entries[i].Term,
-			})
+		newLog := make([]LogEntry, 0)
+		for _, entry := range args.Entries {
+			logEntry := LogEntry{
+				Command: entry.Command,
+				Term:    entry.Term,
+			}
+			newLog = append(newLog, logEntry)
 		}
+		rf.log = append(rf.log[:args.PrevLogIndex+1], newLog...)
 
 		// 如果leader commit index > follower 本地存储的 commit index，
 		// 则更新 follower本地的 commitIndex = min(leaderCommit , 将要保存的logs中最后一个log entry index)

@@ -53,7 +53,17 @@ func (rf *Raft) getEntriesToEnd(startIdx int) []LogEntry {
 			panic(err)
 		}
 	}()
-	return rf.log[startIdx:]
+	// 注意这里需要clone一份出来，因为它的return值 会直接作为AppendEntriesArgs的Entries
+	// 如果不做clone，会出现data race
+	// write 在AppendEntries里的rf.log切片
+	// read 在labrpc里的labgob encode读取entries
+	return rf.cloneLogEntries(rf.log[startIdx:])
+}
+
+func (rf *Raft) cloneLogEntries(orig []LogEntry) []LogEntry {
+	x := make([]LogEntry, len(orig))
+	copy(x, orig)
+	return x
 }
 
 func (rf *Raft) getEntriesFromStartTo(endIdx int) []LogEntry {

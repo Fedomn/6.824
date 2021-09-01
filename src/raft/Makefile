@@ -3,10 +3,7 @@
 default: test
 
 COUNT = 200
-#TEST_NAME = "TestConcurrentStarts2B|TestRejoin2B"
-#TEST_NAME = "TestBasicAgree2B|TestFailAgree2B|TestFailNoAgree2B"
 TEST_NAME = "2A|2B"
-#TEST_NAME = "TestBackup2B"
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
@@ -16,13 +13,13 @@ test: clean
 #		go test -run ${TEST_NAME} -race -failfast -count ${COUNT} > testrace.log ; \
 #	done
 
-testrace: clean
-	go test -run ${TEST_NAME} -race -failfast -count 100 > testrace.log
+#testrace: clean
+#	go test -run ${TEST_NAME} -race -failfast -count 100 > testrace.log
 
 clean:
 	@rm *.log || true
 	@rm tester || true
 	@rm log || true
 
-2B:
-	time go test -run TestBasicAgree2B -race > 2B.log
+#2B:
+#	time go test -run TestBasicAgree2B -race > 2B.log

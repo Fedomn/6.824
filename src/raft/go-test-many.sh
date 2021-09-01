@@ -44,7 +44,7 @@ fi
 
 # If the tests don't even build, don't bother. Also, this gives us a static
 # tester binary for higher performance and higher reproducability.
-if ! go test -c -o tester; then
+if ! go test -race -c -o tester; then
 	echo -e "\e[1;31mERROR: Build failed\e[0m"
 	exit 1
 fi
