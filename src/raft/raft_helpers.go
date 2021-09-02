@@ -190,7 +190,7 @@ func (rf *Raft) isGotMajorityVoteWithLock() bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	majorityCount := len(rf.peers)/2 + 1
-	return rf.requestVoteGrantedCnt >= majorityCount
+	return rf.requestVoteGrantedCnt >= majorityCount && rf.state == StateCandidate
 }
 
 func (rf *Raft) isEncounterPartitionWithLock() bool {

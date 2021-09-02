@@ -151,11 +151,12 @@ func (rf *Raft) startRequestVote(ctx context.Context) {
 				})
 			}
 
+			// 这里加了个StateCandidate判断，防止RequestVote里becomeFollower先跑 并发问题
+			// 这也无法完全保证becomeLeader里panic，除非重新设计整套并发程序，通过event方式
 			if rf.isGotMajorityVoteWithLock() {
 				onceState.Do(func() {
 					rf.safe(func() {
 						DPrintf(rf.me, "RequestVote %v->%v got majority votes, so upgrade to leader immediately", rf.me, peerIdx)
-						// FIXME 和 RequestVote里becomeFollower方法存在 并发问题
 						rf.becomeLeader()
 					})
 
