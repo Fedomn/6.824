@@ -91,7 +91,8 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 					Term:         rf.currentTerm,
 					LeaderId:     rf.me,
 					PrevLogIndex: nextLogEntryIndex - 1,
-					// FIXME index out of range [103] with length 103
+					// index out of range [103] with length 103
+					// 原因：leader连续发了两次append RPC，每次follower都返回success，导致nextIndex越界了
 					PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
 					Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
 					LeaderCommit: rf.commitIndex,
@@ -158,7 +159,7 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 							rf.me, peerIdx, len(args.Entries))
 					} else {
 						rf.setNextIndexAndMatchIndex(peerIdx, len(args.Entries))
-						TPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so will increase nextIndex %v, matchIndex %v",
+						TPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so had increased nextIndex %v, matchIndex %v",
 							rf.me, peerIdx, len(args.Entries), rf.nextIndex, rf.matchIndex)
 					}
 				})
@@ -313,5 +314,6 @@ func (rf *Raft) applyLogsWithLock() {
 			CommandIndex: i,
 		}
 		rf.lastApplied++
+		DPrintf(rf.me,"Applied one entry: %v, lastApplied: %v", rf.getLogEntry(i), rf.lastApplied)
 	}
 }

@@ -78,7 +78,8 @@ func (rf *Raft) setStatusWithLock(status StateType) {
 }
 
 func (rf *Raft) setNextIndexAndMatchIndex(peerIdx int, sentEntriesLen int) {
-	rf.nextIndex[peerIdx] = rf.nextIndex[peerIdx] + sentEntriesLen
+	// 防止leader重复发送append RPC导致 nextIndex数组越界
+	rf.nextIndex[peerIdx] = min(rf.nextIndex[peerIdx]+sentEntriesLen, rf.getLastLogIndex()+1)
 	rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx] - 1
 }
 
