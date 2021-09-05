@@ -151,6 +151,14 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 				return
 			}
 
+			// 避免一种极端情况，leader term < follower term时候，reply=false，第一个收到的goroutine就会将state变为follower，
+			// 但是，由于AppendEntries RPC是并发发送的，第一个收到reply=false后，就会reset term到一致，从而通过了上面的if check，
+			// 进入下面的nextIndex赋值阶段，由于ConflictIndex默认值=0，从而导致错误，所以这里又加了一次状态check，但仍然可以出错
+			// 引申：用event的方式，来驱动状态机，是不是就不需要 各种状态转变后的check
+			if !rf.isLeaderWithLock() {
+				return
+			}
+
 			if reply.Success {
 				rf.safe(func() {
 					rf.appendEntriesSuccessCnt++
@@ -203,6 +211,8 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+// 又出现一个bug：当leader term < follower term时，返回
+// reply=false，没有设置ConflictIndex，导致默认值为0，进而导致取nextIndex时候，index out of range -1报错
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
