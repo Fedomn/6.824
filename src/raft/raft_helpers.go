@@ -168,9 +168,9 @@ func (rf *Raft) becomeLeader() {
 		rf.matchIndex[i] = 0
 	}
 
-	// FIXME
-	// clean leader uncommitted log entries
-	// rf.log = rf.log[:rf.commitIndex+1]
+	// 不应该clean leader uncommitted log entries
+	// 因为当选的leader还需要完成上一轮leader的replication任务
+
 	// reset计数器
 	rf.appendEntriesCnt = 1
 	rf.appendEntriesSuccessCnt = 1
