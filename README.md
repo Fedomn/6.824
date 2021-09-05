@@ -197,6 +197,16 @@ Hints:
 - 需要实现election restriction。Paper section 5.4.1
 - loop check方法需要有个pause。使用Cond或time.Sleep在loop iteration
 
+#### Part 2C persistence
+
+This requires that Raft keep persistent state that survives a reboot
+
+Task:
+
+- 完成raft.go里的persist()和readPersist()方法
+- 在需要的地方调用persist()方法
+
+
 
 
 

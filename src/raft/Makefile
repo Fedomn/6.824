@@ -3,7 +3,7 @@
 default: test
 
 COUNT = 200
-TEST_NAME = "2A|2B"
+TEST_NAME = "2A|2B|2C"
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}

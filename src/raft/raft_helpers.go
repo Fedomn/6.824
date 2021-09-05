@@ -137,6 +137,8 @@ func (rf *Raft) becomeFollower(term int, lead int) {
 
 	rf.resetElectionSignal <- struct{}{}
 	rf.resetAppendEntriesSignal <- struct{}{}
+
+	rf.persist()
 	DPrintf(rf.me, "Raft %v became follower at term %v", rf.me, rf.currentTerm)
 }
 
@@ -151,6 +153,8 @@ func (rf *Raft) becomeCandidate() {
 	// reset 计数器 include candidate itself
 	rf.requestVoteCnt = 1
 	rf.requestVoteGrantedCnt = 1
+
+	rf.persist()
 	DPrintf(rf.me, "Raft %v became candidate at term %v", rf.me, rf.currentTerm)
 }
 
@@ -170,11 +174,15 @@ func (rf *Raft) becomeLeader() {
 
 	// 不应该clean leader uncommitted log entries
 	// 因为当选的leader还需要完成上一轮leader的replication任务
+	// 打开下面clean操作，会造成TestFigure82C失败，即
+	// The leader in a new term may try to finish replicating log entries that haven't been committed yet.
+	// rf.log = rf.log[:rf.commitIndex+1]
 
 	// reset计数器
 	rf.appendEntriesCnt = 1
 	rf.appendEntriesSuccessCnt = 1
 
+	rf.persist()
 	DPrintf(rf.me, "Raft %v became leader at term %v, "+
 		"commitIndex:%v, lastApplied:%v, nextIndex:%v, matchIndex:%v, log:%v",
 		rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex, rf.log)

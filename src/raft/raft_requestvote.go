@@ -189,10 +189,11 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	defer TPrintf(rf.me, "RequestVote %v<-%v reply %+v %+v", rf.me, args.CandidateId, reply, args)
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	defer TPrintf(rf.me, "RequestVote %v<-%v reply %+v %+v", rf.me, args.CandidateId, reply, args)
+	defer rf.persist()
 
 	// 异常情况：candidate last log term < follower term ，说明candidate已经在集群中落后了，返回false
 	// 比如：一个follower刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的

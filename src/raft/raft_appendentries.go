@@ -204,10 +204,12 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	defer TPrintf(rf.me, "AppendEntries %v<-%v reply %+v %+v", rf.me, args.LeaderId, reply, args)
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	defer TPrintf(rf.me, "AppendEntries %v<-%v reply %+v %+v", rf.me, args.LeaderId, reply, args)
+	defer rf.persist()
+
 	DPrintf(rf.me, "AppendEntries %v<-%v current log %v, commitIndex: %v",
 		rf.me, args.LeaderId, rf.log, rf.commitIndex)
 
@@ -248,7 +250,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.PrevLogIndex > lastLogIndex {
 			// 防止slice越界
 			passCheck = false
-			reply.ConflictIndex = lastLogIndex
+			// 注意，conflict index应该为最后的index + 1，因为在下一次RPC需要计算PrevLogIndex=nextIndex-1
+			reply.ConflictIndex = lastLogIndex + 1
 			DPrintf(rf.me, "AppendEntries %v<-%v fail consistency for index. %v < %v, conflictIndex:%v",
 				rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex, reply.ConflictIndex)
 			break
@@ -314,6 +317,7 @@ func (rf *Raft) applyLogsWithLock() {
 			CommandIndex: i,
 		}
 		rf.lastApplied++
-		DPrintf(rf.me,"Applied one entry: %v, lastApplied: %v", rf.getLogEntry(i), rf.lastApplied)
+		DPrintf(rf.me, "Applied one entry: %v, lastApplied: %v", rf.getLogEntry(i), rf.lastApplied)
 	}
+	rf.persist()
 }
