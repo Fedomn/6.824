@@ -176,8 +176,8 @@ func (rf *Raft) startAppendEntries(ctx context.Context) {
 				onceState.Do(func() {
 					rf.safe(func() {
 						rf.commitIndex = rf.calcCommitIndex()
-						DPrintf(rf.me, "AppendEntries %v->%v got majority success, after calc commitIndex: %v, log: %v, matchIndex: %v",
-							rf.me, peerIdx, rf.commitIndex, rf.log, rf.matchIndex)
+						DPrintf(rf.me, "AppendEntries %v->%v got majority success, after calc commitIndex: %v, matchIndex: %v",
+							rf.me, peerIdx, rf.commitIndex, rf.matchIndex)
 
 						deltaLogsCount := rf.commitIndex - rf.lastApplied
 						if deltaLogsCount > 0 {
@@ -210,8 +210,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer TPrintf(rf.me, "AppendEntries %v<-%v reply %+v %+v", rf.me, args.LeaderId, reply, args)
 	defer rf.persist()
 
-	DPrintf(rf.me, "AppendEntries %v<-%v current log %v, commitIndex: %v",
-		rf.me, args.LeaderId, rf.log, rf.commitIndex)
+	DPrintf(rf.me, "AppendEntries %v<-%v, commitIndex:%v, lastApplied:%v", rf.me, args.LeaderId, rf.commitIndex, rf.lastApplied)
 
 	// 异常情况：leader term < follower term，说明leader已经在集群中落后了，返回false
 	// 比如：一个leader刚从crash中recover，但它已经落后了很多term了，则它的logs也属于落后的
@@ -317,7 +316,9 @@ func (rf *Raft) applyLogsWithLock() {
 			CommandIndex: i,
 		}
 		rf.lastApplied++
-		DPrintf(rf.me, "Applied one entry: %v, lastApplied: %v", rf.getLogEntry(i), rf.lastApplied)
+	}
+	if rf.lastApplied+1 <= rf.commitIndex {
+		DPrintf(rf.me, "Applied entries: %v~%v", rf.lastApplied+1, rf.commitIndex)
 	}
 	rf.persist()
 }

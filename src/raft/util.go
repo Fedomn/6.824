@@ -33,7 +33,7 @@ var colorMap = map[int]func(format string, a ...interface{}) string{
 }
 
 // Debugging
-const Debug = false
+const Debug = true
 const Trace = false
 
 func DPrintf(rfme int, format string, a ...interface{}) {

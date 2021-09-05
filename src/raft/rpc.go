@@ -1,5 +1,7 @@
 package raft
 
+import "fmt"
+
 // election timeout range special for test, because test require heartbeat minimum 100ms
 var electionTimeoutRange = []int{300, 600}
 
@@ -29,6 +31,11 @@ type AppendEntriesArgs struct {
 	PrevLogTerm  int        // term of pervLogIndex log entry
 	Entries      []LogEntry // log entries to store (empty for heartbeat)
 	LeaderCommit int        // leader commit index
+}
+
+func (a AppendEntriesArgs) String() string {
+	return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v}",
+		a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit)
 }
 
 type AppendEntriesReply struct {

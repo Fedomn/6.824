@@ -185,7 +185,7 @@ func (rf *Raft) becomeLeader() {
 	rf.persist()
 	DPrintf(rf.me, "Raft %v became leader at term %v, "+
 		"commitIndex:%v, lastApplied:%v, nextIndex:%v, matchIndex:%v, log:%v",
-		rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex, rf.log)
+		rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex, debugLog(rf.log))
 }
 
 func (rf *Raft) isEncounterSplitVoteWithLock() bool {
@@ -234,4 +234,11 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func debugLog(logs []LogEntry) interface{} {
+	if len(logs) > 50 {
+		return "ignore too large logs"
+	}
+	return logs
 }
