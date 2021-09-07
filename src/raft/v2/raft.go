@@ -521,6 +521,7 @@ func (rf *Raft) startAppendEntries() {
 		peerIdx := idx
 		go func() {
 			rf.mu.Lock()
+			// TODO 考虑移出goroutine，这里存在并发情况，可能currentTerm受到其它RPC而增加了，并非最开始的term
 			nextLogEntryIndex := rf.nextIndex[peerIdx]
 			args := &AppendEntriesArgs{
 				Term:         rf.currentTerm,
