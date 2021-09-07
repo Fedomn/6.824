@@ -58,8 +58,8 @@ type Raft struct {
 	// for internal event chan
 	eventCh chan Event
 
-	waitRequestVoteDone   chan struct{}
-	waitAppendEntriesDone chan struct{}
+	waitRequestVoteDone   map[int]chan struct{}
+	waitAppendEntriesDone map[int]chan struct{}
 
 	killCh chan struct{}
 
@@ -228,7 +228,7 @@ func (rf *Raft) Step(e Event) error {
 			}
 		}
 		rf.electionElapsed = 0
-		rf.waitRequestVoteDone <- struct{}{}
+		rf.waitRequestVoteDone[args.CandidateId] <- struct{}{}
 		return nil
 	case EventApp:
 		args := e.Args.(*AppendEntriesArgs)
@@ -306,7 +306,7 @@ func (rf *Raft) Step(e Event) error {
 			}
 		}
 		rf.electionElapsed = 0
-		rf.waitAppendEntriesDone <- struct{}{}
+		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
 		return nil
 	default:
 		return rf.step(rf, e)
@@ -486,7 +486,9 @@ func (rf *Raft) startRequestVote() {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// labrpc这里的调用到这里后，同步等待方法执行完，再返回reply
 	rf.send(Event{Type: EventVote, From: args.CandidateId, To: rf.me, Term: args.Term, Args: args, Reply: reply})
-	<-rf.waitRequestVoteDone
+	// 这里可能会被并发请求，导致同时等待waitRequestVoteDone，可能出现后来的RPC还未处理完，
+	// 却被之前的RPC先释放了done
+	<-rf.waitRequestVoteDone[args.CandidateId]
 }
 
 func (rf *Raft) startAppendEntries() {
@@ -528,7 +530,7 @@ func (rf *Raft) startAppendEntries() {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.send(Event{Type: EventApp, From: args.LeaderId, To: rf.me, Term: args.Term, Args: args, Reply: reply})
-	<-rf.waitAppendEntriesDone
+	<-rf.waitAppendEntriesDone[args.LeaderId]
 }
 
 func (rf *Raft) applyLogs() {
@@ -635,8 +637,14 @@ func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh ch
 
 	rf.applyCh = applyCh
 
-	rf.waitRequestVoteDone = make(chan struct{})
-	rf.waitAppendEntriesDone = make(chan struct{})
+	rf.waitRequestVoteDone = make(map[int]chan struct{})
+	for i := 0; i < len(rf.peers); i++ {
+		rf.waitRequestVoteDone[i] = make(chan struct{})
+	}
+	rf.waitAppendEntriesDone = make(map[int]chan struct{})
+	for i := 0; i < len(rf.peers); i++ {
+		rf.waitAppendEntriesDone[i] = make(chan struct{})
+	}
 	rf.killCh = make(chan struct{})
 
 	// initialize from state persisted before a crash
