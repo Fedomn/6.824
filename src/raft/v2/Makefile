@@ -2,14 +2,14 @@
 
 default: run
 
-RUN_NAME="TestReElection2A"
+RUN_NAME="TestRPCBytes2B"
 
 run: clean
 	go test -run ${RUN_NAME} -race -failfast > testrun.log
 
 COUNT = 200
 #TEST_NAME = "2A|2B|2C"
-TEST_NAME = "TestInitialElection2A|TestReElection2A"
+TEST_NAME = "2A"
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}

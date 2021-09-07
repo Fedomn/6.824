@@ -185,8 +185,6 @@ func TestRPCBytes2B(t *testing.T) {
 	}
 
 	cfg.end()
-
-	debugLogInfo(cfg, servers)
 }
 
 func TestFailAgree2B(t *testing.T) {

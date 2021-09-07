@@ -115,12 +115,21 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 }
 
 func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	index = -1
 	term = -1
 	isLeader = rf.state == StateLeader
 	if !isLeader {
 		return
 	}
+
+	rf.log = append(rf.log, LogEntry{
+		Command: command,
+		Term:    rf.currentTerm,
+	})
+	index = rf.getLastLogIndex()
+	term = rf.currentTerm
 	return
 }
 
@@ -375,7 +384,7 @@ func stepLeader(rf *Raft, e Event) error {
 				TPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so heartbeat will do nothing",
 					e.From, e.To, len(args.Entries))
 			} else {
-				rf.setNextIndexAndMatchIndex(e.To, len(args.Entries))
+				rf.setNextIndexAndMatchIndex(e.From, len(args.Entries))
 				TPrintf(rf.me, "AppendEntries %v->%v RPC got success, entries len: %v, so had increased nextIndex %v, matchIndex %v",
 					e.From, e.To, len(args.Entries), rf.nextIndex, rf.matchIndex)
 			}
