@@ -236,7 +236,9 @@ func (rf *Raft) Step(e Event) error {
 				rf.becomeFollower(args.Term, None)
 			}
 		}
-		rf.electionElapsed = 0
+		if reply.VoteGranted {
+			rf.electionElapsed = 0
+		}
 		rf.waitRequestVoteDone[args.CandidateId] <- struct{}{}
 		return nil
 	case EventApp:
@@ -314,7 +316,9 @@ func (rf *Raft) Step(e Event) error {
 				reply.Term = rf.currentTerm
 			}
 		}
-		rf.electionElapsed = 0
+		if reply.Success {
+			rf.electionElapsed = 0
+		}
 		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
 		return nil
 	default:
@@ -392,6 +396,7 @@ func stepLeader(rf *Raft, e Event) error {
 			rf.nextIndex[e.From] = reply.ConflictIndex
 			DPrintf(rf.me, "AppendEntries %v->%v RPC got false, so will decrease nextIndex and append again, %v",
 				e.From, e.To, rf.nextIndex)
+			return nil
 		}
 
 		// maybeCommit
