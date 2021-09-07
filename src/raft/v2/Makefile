@@ -2,7 +2,7 @@
 
 default: run
 
-RUN_NAME="TestRPCBytes2B"
+RUN_NAME="TestFailAgree2B"
 
 run: clean
 	go test -run ${RUN_NAME} -race -failfast > testrun.log

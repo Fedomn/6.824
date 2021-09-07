@@ -307,7 +307,7 @@ func (rf *Raft) Step(e Event) error {
 					// 存在一种情况，follower落后leader很多，这次appendEntries还未补全所有log，
 					// 所以 这次follower的committedIndex为最后一个logIndex
 					rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
-					go rf.applyLogs()
+					go rf.applyLogsWithLock()
 				}
 			} else {
 				reply.Success = false
@@ -389,7 +389,7 @@ func stepLeader(rf *Raft, e Event) error {
 					e.From, e.To, len(args.Entries), rf.nextIndex, rf.matchIndex)
 			}
 		} else {
-			rf.nextIndex[e.To] = reply.ConflictIndex
+			rf.nextIndex[e.From] = reply.ConflictIndex
 			DPrintf(rf.me, "AppendEntries %v->%v RPC got false, so will decrease nextIndex and append again, %v",
 				e.From, e.To, rf.nextIndex)
 		}
@@ -405,7 +405,7 @@ func stepLeader(rf *Raft, e Event) error {
 			if deltaLogsCount > 0 {
 				DPrintf(rf.me, "AppendEntries %v->%v will apply %v - %v = delta %v",
 					e.From, e.To, rf.commitIndex, rf.lastApplied, deltaLogsCount)
-				go rf.applyLogs()
+				go rf.applyLogsWithLock()
 			}
 		}
 	default:
@@ -542,7 +542,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	<-rf.waitAppendEntriesDone[args.LeaderId]
 }
 
-func (rf *Raft) applyLogs() {
+func (rf *Raft) applyLogsWithLock() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 		rf.applyCh <- ApplyMsg{
 			CommandValid: true,
