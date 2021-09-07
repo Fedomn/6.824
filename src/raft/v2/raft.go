@@ -61,6 +61,8 @@ type Raft struct {
 	waitRequestVoteDone   chan struct{}
 	waitAppendEntriesDone chan struct{}
 
+	killCh chan struct{}
+
 	// for tester
 	applyCh chan ApplyMsg
 }
@@ -124,7 +126,7 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
-	// Your code here, if desired.
+	rf.killCh <- struct{}{}
 }
 
 func (rf *Raft) killed() bool {
@@ -146,6 +148,7 @@ func (rf *Raft) becomeCandidate() {
 	rf.reset(rf.currentTerm + 1)
 	rf.state = StateCandidate
 	rf.votedFor = rf.me
+	rf.voteFrom[rf.me] = struct{}{}
 	rf.tick = rf.tickElection
 	rf.step = stepCandidate
 	DPrintf(rf.me, "Raft %v became candidate at term %v", rf.me, rf.currentTerm)
@@ -190,6 +193,7 @@ func (rf *Raft) Step(e Event) error {
 			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
 		case args.Term > rf.currentTerm:
+			originalCurrentTerm := rf.currentTerm
 			rf.currentTerm = args.Term
 			reply.Term = rf.currentTerm
 
@@ -218,8 +222,8 @@ func (rf *Raft) Step(e Event) error {
 			}
 
 			if rf.state != StateFollower {
-				DPrintf(rf.me, "RequestVote %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-					rf.me, args.CandidateId, rf.state, rf.currentTerm, reply.Term)
+				DPrintf(rf.me, "RequestVote %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+					rf.me, args.CandidateId, rf.state, originalCurrentTerm, reply.Term)
 				rf.becomeFollower(args.Term, None)
 			}
 		}
@@ -294,7 +298,7 @@ func (rf *Raft) Step(e Event) error {
 					// 存在一种情况，follower落后leader很多，这次appendEntries还未补全所有log，
 					// 所以 这次follower的committedIndex为最后一个logIndex
 					rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
-					go rf.applyLogsWithLock()
+					go rf.applyLogs()
 				}
 			} else {
 				reply.Success = false
@@ -314,7 +318,7 @@ func stepFollower(rf *Raft, e Event) error {
 		rf.becomeCandidate()
 		rf.send(e)
 	default:
-		panic(fmt.Sprintf("invalid event:%v for raft:%v %v", e, rf.state, rf.me))
+		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for %v", e, rf.state))
 	}
 	return nil
 }
@@ -334,7 +338,7 @@ func stepCandidate(rf *Raft, e Event) error {
 			return nil
 		}
 		if reply.VoteGranted {
-			rf.voteFrom[e.To] = struct{}{}
+			rf.voteFrom[e.From] = struct{}{}
 		}
 		DPrintf(rf.me, "RequestVote %v->%v voteFrom %+v", e.From, e.To, rf.voteFrom)
 		// got majority votes
@@ -343,10 +347,10 @@ func stepCandidate(rf *Raft, e Event) error {
 			rf.send(Event{Type: EventBeat, From: rf.me, Term: rf.currentTerm})
 			return nil
 		}
-		// got all reply, but not got majority granted vote, maybe encounter split vote
-		// TODO increase term and election again
+		// split vote的情况处理逻辑，发生在electionTimeout里，避免这里还需要计数requestedVoteCount
+		// 同时我们基于event-driven后，channel是顺序取event，就出现了requestedVoteCount已经=3了，但状态机还未收到event3
 	default:
-		panic(fmt.Sprintf("invalid event:%v for raft:%v %v", e, rf.state, rf.me))
+		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
 	}
 	return nil
 }
@@ -362,7 +366,7 @@ func stepLeader(rf *Raft, e Event) error {
 			return nil
 		}
 		if reply.Term > rf.currentTerm {
-			DPrintf(rf.me, "AppendEntries %v->%v %s currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
+			DPrintf(rf.me, "AppendEntries %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
 			rf.becomeFollower(reply.Term, None)
 			return nil
 		}
@@ -385,32 +389,42 @@ func stepLeader(rf *Raft, e Event) error {
 		calcCommitIndex := rf.calcCommitIndex()
 		if rf.commitIndex != calcCommitIndex {
 			DPrintf(rf.me, "AppendEntries %v->%v maybe commit, before:%v after calc commitIndex:%v, matchIndex: %v",
-				rf.me, rf.commitIndex, calcCommitIndex, rf.matchIndex)
+				e.From, e.To, rf.commitIndex, calcCommitIndex, rf.matchIndex)
 			rf.commitIndex = calcCommitIndex
 
 			deltaLogsCount := rf.commitIndex - rf.lastApplied
 			if deltaLogsCount > 0 {
 				DPrintf(rf.me, "AppendEntries %v->%v will apply %v - %v = delta %v",
 					e.From, e.To, rf.commitIndex, rf.lastApplied, deltaLogsCount)
-				go rf.applyLogsWithLock()
+				go rf.applyLogs()
 			}
 		}
 	default:
-		panic(fmt.Sprintf("invalid event:%v for raft:%v %v", e, rf.state, rf.me))
+		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
 	}
 	return nil
 }
 
 func (rf *Raft) tickElection() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.electionElapsed++
-	//DPrintf(rf.me, "electionElapsed: %v, randomizedElectionTimeout: %v", rf.electionElapsed, rf.randomizedElectionTimeout)
+
 	if rf.electionElapsed >= rf.randomizedElectionTimeout {
-		TPrintf(rf.me, "tick election timeout !")
+		DPrintf(rf.me, "tick election timeout !")
+
+		if rf.state == StateCandidate {
+			DPrintf(rf.me, "Candidate %v start election again, may encounter split vote at term %v !", rf.me, rf.currentTerm)
+			rf.becomeFollower(rf.currentTerm, None)
+		}
+
 		rf.electionElapsed = 0
 		rf.send(Event{Type: EventHup, From: rf.me, Term: rf.currentTerm})
 	}
 }
 func (rf *Raft) tickHeartbeat() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.heartbeatElapsed++
 	rf.electionElapsed++
 
@@ -419,7 +433,7 @@ func (rf *Raft) tickHeartbeat() {
 	}
 
 	if rf.heartbeatElapsed >= rf.heartbeatTimeout {
-		TPrintf(rf.me, "tick heartbeat timeout !")
+		DPrintf(rf.me, "tick heartbeat timeout !")
 		rf.heartbeatElapsed = 0
 		rf.send(Event{Type: EventBeat, From: rf.me, Term: rf.currentTerm})
 	}
@@ -449,6 +463,7 @@ func (rf *Raft) startRequestVote() {
 		}
 		peerIdx := idx
 		go func() {
+			rf.mu.Lock()
 			lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 			args := &RequestVoteArgs{
 				Term:         rf.currentTerm,
@@ -457,11 +472,12 @@ func (rf *Raft) startRequestVote() {
 				LastLogTerm:  lastLogTerm,
 			}
 			reply := &RequestVoteReply{}
+			rf.mu.Unlock()
 			DPrintf(rf.me, "RequestVote %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestVote", args, reply); !ok {
 				TPrintf(rf.me, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
 			} else {
-				rf.send(Event{Type: EventVoteResp, From: rf.me, To: peerIdx, Term: rf.currentTerm, Args: args, Reply: reply})
+				rf.send(Event{Type: EventVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 			}
 		}()
 	}
@@ -488,6 +504,7 @@ func (rf *Raft) startAppendEntries() {
 		}
 		peerIdx := idx
 		go func() {
+			rf.mu.Lock()
 			nextLogEntryIndex := rf.nextIndex[peerIdx]
 			args := &AppendEntriesArgs{
 				Term:         rf.currentTerm,
@@ -498,11 +515,12 @@ func (rf *Raft) startAppendEntries() {
 				LeaderCommit: rf.commitIndex,
 			}
 			reply := &AppendEntriesReply{}
+			rf.mu.Unlock()
 			DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
 				TPrintf(rf.me, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
 			} else {
-				rf.send(Event{Type: EventAppResp, From: rf.me, To: peerIdx, Term: rf.currentTerm, Args: args, Reply: reply})
+				rf.send(Event{Type: EventAppResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 			}
 		}()
 	}
@@ -513,9 +531,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	<-rf.waitAppendEntriesDone
 }
 
-func (rf *Raft) applyLogsWithLock() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+func (rf *Raft) applyLogs() {
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 		rf.applyCh <- ApplyMsg{
 			CommandValid: true,
@@ -621,6 +637,7 @@ func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh ch
 
 	rf.waitRequestVoteDone = make(chan struct{})
 	rf.waitAppendEntriesDone = make(chan struct{})
+	rf.killCh = make(chan struct{})
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

@@ -2,8 +2,9 @@ package v2
 
 import "fmt"
 
-const tickTimeout = 100     // raft internal tick is 100ms
-const electionTimeout = 10  // max 10*tickTimout
+const tickTimeout = 100 // raft internal tick is 100ms
+// test中要求1s内完成election，因此减少这里的electionTimeout，尽量保证1s内多trigger几次election
+const electionTimeout = 5   // random range: [electionTimeout, 2*electionTimeout] * tickTimeout
 const heartbeatsTimeout = 1 // 1*tickTimeout
 
 type EventType int32
