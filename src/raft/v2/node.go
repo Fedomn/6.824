@@ -19,9 +19,7 @@ func newNode(rf *Raft) *Node {
 
 // 由于test里会不停get raft的内部状态，如state, currentTerm等，
 // 因此需要对不同类别之间 进行加锁避免数据竞争
-// 1. tickFunction和raft.Step属于同一类
-// 2. startRequestVote和startAppendEntries中单独启动的goroutine
-// 3. raft和client交互的地方，GetState和Start需要read内部state
+// 参考我的raft-lab的博客
 func (n *Node) run() {
 	for {
 		select {

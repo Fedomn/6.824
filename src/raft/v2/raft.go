@@ -476,17 +476,15 @@ func (rf *Raft) startRequestVote() {
 			continue
 		}
 		peerIdx := idx
+		lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
+		args := &RequestVoteArgs{
+			Term:         rf.currentTerm,
+			CandidateId:  rf.me,
+			LastLogIndex: lastLogIndex,
+			LastLogTerm:  lastLogTerm,
+		}
+		reply := &RequestVoteReply{}
 		go func() {
-			rf.mu.Lock()
-			lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
-			args := &RequestVoteArgs{
-				Term:         rf.currentTerm,
-				CandidateId:  rf.me,
-				LastLogIndex: lastLogIndex,
-				LastLogTerm:  lastLogTerm,
-			}
-			reply := &RequestVoteReply{}
-			rf.mu.Unlock()
 			DPrintf(rf.me, "RequestVote %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestVote", args, reply); !ok {
 				if !rf.killed() {
@@ -521,20 +519,18 @@ func (rf *Raft) startAppendEntries() {
 			continue
 		}
 		peerIdx := idx
+		// 移出goroutine，这里存在并发情况，可能currentTerm受到其它RPC而增加了，并非最开始的term
+		nextLogEntryIndex := rf.nextIndex[peerIdx]
+		args := &AppendEntriesArgs{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: nextLogEntryIndex - 1,
+			PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
+			Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
+			LeaderCommit: rf.commitIndex,
+		}
+		reply := &AppendEntriesReply{}
 		go func() {
-			rf.mu.Lock()
-			// TODO 考虑移出goroutine，这里存在并发情况，可能currentTerm受到其它RPC而增加了，并非最开始的term
-			nextLogEntryIndex := rf.nextIndex[peerIdx]
-			args := &AppendEntriesArgs{
-				Term:         rf.currentTerm,
-				LeaderId:     rf.me,
-				PrevLogIndex: nextLogEntryIndex - 1,
-				PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
-				Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
-				LeaderCommit: rf.commitIndex,
-			}
-			reply := &AppendEntriesReply{}
-			rf.mu.Unlock()
 			DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
 				if !rf.killed() {
