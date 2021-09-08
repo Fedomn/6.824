@@ -135,7 +135,7 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
-	rf.killCh <- struct{}{}
+	close(rf.killCh)
 }
 
 func (rf *Raft) killed() bool {
@@ -489,7 +489,9 @@ func (rf *Raft) startRequestVote() {
 			rf.mu.Unlock()
 			DPrintf(rf.me, "RequestVote %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestVote", args, reply); !ok {
-				TPrintf(rf.me, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
+				if !rf.killed() {
+					TPrintf(rf.me, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
+				}
 			} else {
 				rf.send(Event{Type: EventVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 			}
@@ -535,7 +537,9 @@ func (rf *Raft) startAppendEntries() {
 			rf.mu.Unlock()
 			DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
-				TPrintf(rf.me, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
+				if !rf.killed() {
+					TPrintf(rf.me, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
+				}
 			} else {
 				rf.send(Event{Type: EventAppResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 			}
