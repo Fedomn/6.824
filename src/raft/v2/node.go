@@ -42,7 +42,7 @@ func StartNode(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh 
 	// 这也要求整体架构基于event处理，不使用volatile variables
 	eventCh := make(chan Event, 100)
 	rf := newRaft(peers, me, persister, applyCh, eventCh)
-	rf.becomeFollower(0, None)
+	rf.becomeFollower(rf.currentTerm, None)
 
 	n := newNode(rf)
 

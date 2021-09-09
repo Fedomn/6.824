@@ -149,6 +149,7 @@ func (rf *Raft) becomeFollower(term int, lead int) {
 	rf.tick = rf.tickElection
 	rf.step = stepFollower
 	DPrintf(rf.me, "Raft %v became follower at term %v", rf.me, rf.currentTerm)
+	rf.persist()
 }
 func (rf *Raft) becomeCandidate() {
 	if rf.state == StateLeader {
@@ -161,6 +162,7 @@ func (rf *Raft) becomeCandidate() {
 	rf.tick = rf.tickElection
 	rf.step = stepCandidate
 	DPrintf(rf.me, "Raft %v became candidate at term %v", rf.me, rf.currentTerm)
+	rf.persist()
 }
 func (rf *Raft) becomeLeader() {
 	if rf.state == StateFollower {
@@ -181,6 +183,7 @@ func (rf *Raft) becomeLeader() {
 	DPrintf(rf.me, "Raft %v became leader at term %v, "+
 		"commitIndex:%v, lastApplied:%v, nextIndex:%v, matchIndex:%v, log:%v",
 		rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex, debugLog(rf.log))
+	rf.persist()
 }
 
 func (rf *Raft) Step(e Event) error {
@@ -239,6 +242,7 @@ func (rf *Raft) Step(e Event) error {
 		if reply.VoteGranted {
 			rf.electionElapsed = 0
 		}
+		rf.persist()
 		rf.waitRequestVoteDone[args.CandidateId] <- struct{}{}
 		return nil
 	case EventApp:
@@ -319,6 +323,7 @@ func (rf *Raft) Step(e Event) error {
 		if reply.Success {
 			rf.electionElapsed = 0
 		}
+		rf.persist()
 		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
 		return nil
 	default:
