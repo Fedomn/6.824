@@ -59,8 +59,9 @@ type RequestVoteArgs struct {
 }
 
 type RequestVoteReply struct {
-	Term        int  // replied server's term
-	VoteGranted bool // true means replied server agree
+	Seq         uint32 // rpc sequence
+	Term        int    // replied server's term
+	VoteGranted bool   // true means replied server agree
 }
 
 type LogEntry struct {
@@ -78,13 +79,16 @@ type AppendEntriesArgs struct {
 }
 
 func (a AppendEntriesArgs) String() string {
-	return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v}",
-		a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit)
+	return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v Entries:%v}",
+		a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit, a.Entries)
+	//return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v}",
+	//	a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit)
 }
 
 type AppendEntriesReply struct {
-	Term          int  // replied server's term
-	Success       bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
+	Seq           uint32 // rpc sequence
+	Term          int    // replied server's term
+	Success       bool   // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
 	ConflictIndex int
 }
 

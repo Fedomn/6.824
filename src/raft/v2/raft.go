@@ -63,6 +63,9 @@ type Raft struct {
 
 	killCh chan struct{}
 
+	// 为了解决RPC reply delay造成的event乱序，影响raft判断
+	rpcSequence uint32
+
 	// for tester
 	applyCh chan ApplyMsg
 }
@@ -248,7 +251,7 @@ func (rf *Raft) Step(e Event) error {
 	case EventApp:
 		args := e.Args.(*AppendEntriesArgs)
 		reply := e.Reply.(*AppendEntriesReply)
-		//DPrintf(rf.me, "Debug EventApp args:%+v reply:%+v", args, reply)
+		//DPrintf(rf.me, "Debug EventApp args:%+v currentLogs:%v", args, rf.log)
 		switch {
 		case args.Term < rf.currentTerm:
 			DPrintf(rf.me, "AppendEntries %v<-%v currentTerm %v > term %v, ignore lower term",
@@ -346,6 +349,10 @@ func stepCandidate(rf *Raft, e Event) error {
 		rf.startRequestVote()
 	case EventVoteResp:
 		reply := e.Reply.(*RequestVoteReply)
+		if reply.Seq < rf.rpcSequence {
+			TPrintf(rf.me, "RequestVote %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, reply.Seq, rf.rpcSequence)
+			return nil
+		}
 		TPrintf(rf.me, "RequestVote %v->%v RPC got %+v", e.From, e.To, reply)
 		if reply == nil {
 			return nil
@@ -379,6 +386,10 @@ func stepLeader(rf *Raft, e Event) error {
 	case EventAppResp:
 		args := e.Args.(*AppendEntriesArgs)
 		reply := e.Reply.(*AppendEntriesReply)
+		if reply.Seq < rf.rpcSequence {
+			TPrintf(rf.me, "AppendEntries %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, reply.Seq, rf.rpcSequence)
+			return nil
+		}
 		TPrintf(rf.me, "AppendEntries %v->%v RPC got %+v", e.From, e.To, reply)
 		if reply == nil {
 			return nil
@@ -476,6 +487,7 @@ func (rf *Raft) send(e Event) {
 }
 
 func (rf *Raft) startRequestVote() {
+	rf.rpcSequence++
 	for idx := range rf.peers {
 		if idx == rf.me {
 			continue
@@ -488,7 +500,7 @@ func (rf *Raft) startRequestVote() {
 			LastLogIndex: lastLogIndex,
 			LastLogTerm:  lastLogTerm,
 		}
-		reply := &RequestVoteReply{}
+		reply := &RequestVoteReply{Seq: rf.rpcSequence}
 		go func() {
 			DPrintf(rf.me, "RequestVote %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestVote", args, reply); !ok {
@@ -511,11 +523,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) startAppendEntries() {
+	rf.rpcSequence++
 	if rf.commitIndex == rf.getLastLogIndex() {
 		// 没有uncommitted log entries，则append empty heartbeat
 		TPrintf(rf.me, "AppendEntries no uncommitted log entries")
 	} else {
 		TPrintf(rf.me, "AppendEntries has uncommitted log entries")
+		//TPrintf(rf.me, "Debug TestFigure8Unreliable2C AppendEntries has uncommitted log entries, logs:%v", rf.log)
 	}
 	rf.setNextIndexAndMatchIndex(rf.me, len(rf.getEntriesToEnd(rf.nextIndex[rf.me])))
 
@@ -534,7 +548,7 @@ func (rf *Raft) startAppendEntries() {
 			Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
 			LeaderCommit: rf.commitIndex,
 		}
-		reply := &AppendEntriesReply{}
+		reply := &AppendEntriesReply{Seq: rf.rpcSequence}
 		go func() {
 			DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
@@ -668,6 +682,7 @@ func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh ch
 		rf.waitAppendEntriesDone[i] = make(chan struct{})
 	}
 	rf.killCh = make(chan struct{})
+	rf.rpcSequence = 0
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
