@@ -545,6 +545,10 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		}
 	}
 	cfg.t.Logf("-----second-----")
+	for i := range cfg.rafts {
+		r := cfg.rafts[i]
+		cfg.t.Logf("[%v] state:%v term:%v logs:%v", i, r.state, r.currentTerm, r.log)
+	}
 	cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 	return -1
 }

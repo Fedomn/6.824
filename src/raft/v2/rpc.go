@@ -16,6 +16,9 @@ const (
 	EventVoteResp
 	EventApp
 	EventAppResp
+	EventPreHup
+	EventPreVote
+	EventPreVoteResp
 )
 
 func (r EventType) String() string {
@@ -32,6 +35,12 @@ func (r EventType) String() string {
 		return "EventApp"
 	case EventAppResp:
 		return "EventAppResp"
+	case EventPreHup:
+		return "EventPreHup"
+	case EventPreVote:
+		return "EventPreVote"
+	case EventPreVoteResp:
+		return "EventPreVoteResp"
 	default:
 		return "unknown"
 	}
@@ -80,10 +89,10 @@ type AppendEntriesArgs struct {
 }
 
 func (a AppendEntriesArgs) String() string {
-	return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v Entries:%v}",
-		a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit, a.Entries)
-	//return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v}",
-	//	a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit)
+	//return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v Entries:%v}",
+	//	a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit, a.Entries)
+	return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v}",
+		a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit)
 }
 
 type AppendEntriesReply struct {
@@ -99,6 +108,7 @@ type StateType int
 
 const (
 	StateFollower StateType = iota
+	StatePreCandidate
 	StateCandidate
 	StateLeader
 )
@@ -109,6 +119,8 @@ func (r StateType) String() string {
 		return "follower"
 	case StateCandidate:
 		return "candidate"
+	case StatePreCandidate:
+		return "pre-candidate"
 	case StateLeader:
 		return "leader"
 	default:

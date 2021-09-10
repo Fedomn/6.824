@@ -58,8 +58,9 @@ type Raft struct {
 	// for internal event chan
 	eventCh chan Event
 
-	waitRequestVoteDone   map[int]chan struct{}
-	waitAppendEntriesDone map[int]chan struct{}
+	waitRequestVoteDone    map[int]chan struct{}
+	waitRequestPreVoteDone map[int]chan struct{}
+	waitAppendEntriesDone  map[int]chan struct{}
 
 	killCh chan struct{}
 
@@ -154,6 +155,20 @@ func (rf *Raft) becomeFollower(term int, lead int) {
 	DPrintf(rf.me, "Raft %v became follower at term %v", rf.me, rf.currentTerm)
 	rf.persist()
 }
+func (rf *Raft) becomePreCandidate() {
+	if rf.state == StateLeader {
+		panic("invalid transition [leader -> pre-candidate]")
+	}
+	// 注意这里：preCandidate term是不会递增的
+	rf.reset(rf.currentTerm)
+	rf.state = StatePreCandidate
+	rf.votedFor = rf.me
+	rf.voteFrom[rf.me] = struct{}{}
+	rf.tick = rf.tickElection
+	rf.step = stepPreCandidate
+	DPrintf(rf.me, "Raft %v became pre-candidate at term %v", rf.me, rf.currentTerm)
+	rf.persist()
+}
 func (rf *Raft) becomeCandidate() {
 	if rf.state == StateLeader {
 		panic("invalid transition [leader -> candidate]")
@@ -194,51 +209,59 @@ func (rf *Raft) Step(e Event) error {
 	defer rf.mu.Unlock()
 
 	switch e.Type {
-	case EventVote:
+	case EventVote, EventPreVote:
 		args := e.Args.(*RequestVoteArgs)
 		reply := e.Reply.(*RequestVoteReply)
 		//DPrintf(rf.me, "Debug EventVote args:%+v reply:%+v", args, reply)
 		switch {
 		case args.Term < rf.currentTerm:
-			DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v > term %v, ignore lower term", rf.me, args.CandidateId, rf.currentTerm, args.Term)
+			DPrintf(rf.me, "%s %v<-%v currentTerm %v > term %v, ignore lower term", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term)
 			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
 		case args.Term == rf.currentTerm:
-			DPrintf(rf.me, "RequestVote %v<-%v currentTerm %v == term %v, already votedFor %v", rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
+			DPrintf(rf.me, "%s %v<-%v currentTerm %v == term %v, already votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
 			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
 		case args.Term > rf.currentTerm:
-			originalCurrentTerm := rf.currentTerm
-			rf.currentTerm = args.Term
-			reply.Term = rf.currentTerm
-
 			passCheck := true
 			for loop := true; loop; loop = false {
 				lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 				if args.LastLogTerm < lastLogTerm {
 					passCheck = false
-					DPrintf(rf.me, "RequestVote %v<-%v fail election restriction check about term. %v < %v", rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
+					DPrintf(rf.me, "%s %v<-%v fail election restriction check about term. %v < %v", e.Type, rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
 					break
 				}
 
 				if args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex {
 					passCheck = false
-					DPrintf(rf.me, "RequestVote %v<-%v fail election restriction check about index when same term. %v < %v", rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
+					DPrintf(rf.me, "%s %v<-%v fail election restriction check about index when same term. %v < %v", e.Type, rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
 					break
 				}
 			}
+
+			// 注意preVote不会影响raft状态
+			if e.Type == EventPreVote {
+				reply.VoteGranted = passCheck
+				reply.Term = rf.currentTerm
+				TPrintf(rf.me, "%s %v<-%v reply:%+v", e.Type, rf.me, args.CandidateId, reply)
+				break
+			}
+
+			originalCurrentTerm := rf.currentTerm
+			rf.currentTerm = args.Term
 			if passCheck {
-				TPrintf(rf.me, "RequestVote %v<-%v pass election restriction", rf.me, args.CandidateId)
+				TPrintf(rf.me, "%s %v<-%v pass election restriction", e.Type, rf.me, args.CandidateId)
 				rf.votedFor = args.CandidateId
 				reply.VoteGranted = true
+				reply.Term = rf.currentTerm
 			} else {
 				reply.VoteGranted = false
 				reply.Term = rf.currentTerm
 			}
 
 			if rf.state != StateFollower {
-				DPrintf(rf.me, "RequestVote %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
-					rf.me, args.CandidateId, rf.state, originalCurrentTerm, reply.Term)
+				DPrintf(rf.me, "%s %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+					e.Type, rf.me, args.CandidateId, rf.state, originalCurrentTerm, reply.Term)
 				rf.becomeFollower(args.Term, None)
 			}
 		}
@@ -246,7 +269,12 @@ func (rf *Raft) Step(e Event) error {
 			rf.electionElapsed = 0
 		}
 		rf.persist()
-		rf.waitRequestVoteDone[args.CandidateId] <- struct{}{}
+		switch e.Type {
+		case EventVote:
+			rf.waitRequestVoteDone[args.CandidateId] <- struct{}{}
+		case EventPreVote:
+			rf.waitRequestPreVoteDone[args.CandidateId] <- struct{}{}
+		}
 		return nil
 	case EventApp:
 		args := e.Args.(*AppendEntriesArgs)
@@ -335,11 +363,46 @@ func (rf *Raft) Step(e Event) error {
 }
 func stepFollower(rf *Raft, e Event) error {
 	switch e.Type {
-	case EventHup:
-		rf.becomeCandidate()
+	case EventPreHup:
+		rf.becomePreCandidate()
 		rf.send(e)
 	default:
 		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for %v", e, rf.state))
+	}
+	return nil
+}
+func stepPreCandidate(rf *Raft, e Event) error {
+	switch e.Type {
+	case EventPreHup:
+		rf.startPreRequestVote()
+	case EventPreVoteResp:
+		args := e.Args.(*RequestVoteArgs)
+		reply := e.Reply.(*RequestVoteReply)
+		if args.Seq < rf.rpcSequence {
+			TPrintf(rf.me, "RequestPreVote %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, args.Seq, rf.rpcSequence)
+			return nil
+		}
+		TPrintf(rf.me, "RequestPreVote %v->%v RPC got %+v", e.From, e.To, reply)
+		if reply == nil {
+			return nil
+		}
+		if reply.Term > rf.currentTerm {
+			DPrintf(rf.me, "RequestPreVote %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
+			rf.becomeFollower(reply.Term, None)
+			return nil
+		}
+		if reply.VoteGranted {
+			rf.voteFrom[e.From] = struct{}{}
+		}
+		DPrintf(rf.me, "RequestPreVote %v->%v voteFrom %+v", e.From, e.To, rf.voteFrom)
+		// got majority votes
+		if len(rf.voteFrom) >= len(rf.peers)/2+1 {
+			rf.becomeCandidate()
+			rf.send(Event{Type: EventHup, From: rf.me, To: rf.me, Term: rf.currentTerm})
+			return nil
+		}
+	default:
+		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
 	}
 	return nil
 }
@@ -444,13 +507,13 @@ func (rf *Raft) tickElection() {
 	if rf.electionElapsed >= rf.randomizedElectionTimeout {
 		DPrintf(rf.me, "tick election timeout !")
 
-		if rf.state == StateCandidate {
-			DPrintf(rf.me, "Candidate %v start election again, may encounter split vote at term %v !", rf.me, rf.currentTerm)
+		if rf.state == StateCandidate || rf.state == StatePreCandidate {
+			DPrintf(rf.me, "%s %v start election again, may encounter split vote at term %v !", rf.state, rf.me, rf.currentTerm)
 			rf.becomeFollower(rf.currentTerm, None)
 		}
 
 		rf.electionElapsed = 0
-		rf.send(Event{Type: EventHup, From: rf.me, Term: rf.currentTerm})
+		rf.send(Event{Type: EventPreHup, From: rf.me, Term: rf.currentTerm})
 	}
 }
 func (rf *Raft) tickHeartbeat() {
@@ -516,12 +579,48 @@ func (rf *Raft) startRequestVote() {
 	}
 }
 
+func (rf *Raft) startPreRequestVote() {
+	rf.rpcSequence++
+	for idx := range rf.peers {
+		if idx == rf.me {
+			continue
+		}
+		peerIdx := idx
+		lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
+		args := &RequestVoteArgs{
+			Seq: rf.rpcSequence,
+			// 注意这里：preCandidate请求模拟term+1的情况，如果通过，后面becomeCandidate后，term+1自然也会成功，
+			// 而follower那边对preRequestVote，不会覆盖自身term
+			Term:         rf.currentTerm + 1,
+			CandidateId:  rf.me,
+			LastLogIndex: lastLogIndex,
+			LastLogTerm:  lastLogTerm,
+		}
+		reply := &RequestVoteReply{}
+		go func() {
+			DPrintf(rf.me, "RequestPreVote %v->%v send RPC %+v", rf.me, peerIdx, args)
+			if ok := rf.peers[peerIdx].Call("Raft.RequestPreVote", args, reply); !ok {
+				if !rf.killed() {
+					TPrintf(rf.me, "RequestPreVote %v->%v RPC not reply", rf.me, peerIdx)
+				}
+			} else {
+				rf.send(Event{Type: EventPreVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
+			}
+		}()
+	}
+}
+
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// labrpc这里的调用到这里后，同步等待方法执行完，再返回reply
 	rf.send(Event{Type: EventVote, From: args.CandidateId, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 	// 这里可能会被并发请求，导致同时等待waitRequestVoteDone，可能出现后来的RPC还未处理完，
 	// 却被之前的RPC先释放了done
 	<-rf.waitRequestVoteDone[args.CandidateId]
+}
+
+func (rf *Raft) RequestPreVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	rf.send(Event{Type: EventPreVote, From: args.CandidateId, To: rf.me, Term: args.Term, Args: args, Reply: reply})
+	<-rf.waitRequestPreVoteDone[args.CandidateId]
 }
 
 func (rf *Raft) startAppendEntries() {
@@ -679,6 +778,10 @@ func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh ch
 	rf.waitRequestVoteDone = make(map[int]chan struct{})
 	for i := 0; i < len(rf.peers); i++ {
 		rf.waitRequestVoteDone[i] = make(chan struct{})
+	}
+	rf.waitRequestPreVoteDone = make(map[int]chan struct{})
+	for i := 0; i < len(rf.peers); i++ {
+		rf.waitRequestPreVoteDone[i] = make(chan struct{})
 	}
 	rf.waitAppendEntriesDone = make(map[int]chan struct{})
 	for i := 0; i < len(rf.peers); i++ {
