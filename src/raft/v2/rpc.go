@@ -52,16 +52,16 @@ func (e Event) String() string {
 }
 
 type RequestVoteArgs struct {
-	Term         int // current candidate's term
-	CandidateId  int // current candidate id
-	LastLogIndex int // current candidate logs last log entry index
-	LastLogTerm  int // current candidate logs last log entry term
+	Seq          uint32 // rpc sequence
+	Term         int    // current candidate's term
+	CandidateId  int    // current candidate id
+	LastLogIndex int    // current candidate logs last log entry index
+	LastLogTerm  int    // current candidate logs last log entry term
 }
 
 type RequestVoteReply struct {
-	Seq         uint32 // rpc sequence
-	Term        int    // replied server's term
-	VoteGranted bool   // true means replied server agree
+	Term        int  // replied server's term
+	VoteGranted bool // true means replied server agree
 }
 
 type LogEntry struct {
@@ -70,6 +70,7 @@ type LogEntry struct {
 }
 
 type AppendEntriesArgs struct {
+	Seq          uint32     // rpc sequence
 	Term         int        // leader's term
 	LeaderId     int        // leader id
 	PrevLogIndex int        // index of log entry preceding the following entries
@@ -86,9 +87,8 @@ func (a AppendEntriesArgs) String() string {
 }
 
 type AppendEntriesReply struct {
-	Seq           uint32 // rpc sequence
-	Term          int    // replied server's term
-	Success       bool   // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
+	Term          int  // replied server's term
+	Success       bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
 	ConflictIndex int
 }
 

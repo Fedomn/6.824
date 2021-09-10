@@ -348,9 +348,10 @@ func stepCandidate(rf *Raft, e Event) error {
 	case EventHup:
 		rf.startRequestVote()
 	case EventVoteResp:
+		args := e.Args.(*RequestVoteArgs)
 		reply := e.Reply.(*RequestVoteReply)
-		if reply.Seq < rf.rpcSequence {
-			TPrintf(rf.me, "RequestVote %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, reply.Seq, rf.rpcSequence)
+		if args.Seq < rf.rpcSequence {
+			TPrintf(rf.me, "RequestVote %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, args.Seq, rf.rpcSequence)
 			return nil
 		}
 		TPrintf(rf.me, "RequestVote %v->%v RPC got %+v", e.From, e.To, reply)
@@ -386,8 +387,8 @@ func stepLeader(rf *Raft, e Event) error {
 	case EventAppResp:
 		args := e.Args.(*AppendEntriesArgs)
 		reply := e.Reply.(*AppendEntriesReply)
-		if reply.Seq < rf.rpcSequence {
-			TPrintf(rf.me, "AppendEntries %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, reply.Seq, rf.rpcSequence)
+		if args.Seq < rf.rpcSequence {
+			TPrintf(rf.me, "AppendEntries %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, args.Seq, rf.rpcSequence)
 			return nil
 		}
 		TPrintf(rf.me, "AppendEntries %v->%v RPC got %+v", e.From, e.To, reply)
@@ -495,12 +496,13 @@ func (rf *Raft) startRequestVote() {
 		peerIdx := idx
 		lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 		args := &RequestVoteArgs{
+			Seq:          rf.rpcSequence,
 			Term:         rf.currentTerm,
 			CandidateId:  rf.me,
 			LastLogIndex: lastLogIndex,
 			LastLogTerm:  lastLogTerm,
 		}
-		reply := &RequestVoteReply{Seq: rf.rpcSequence}
+		reply := &RequestVoteReply{}
 		go func() {
 			DPrintf(rf.me, "RequestVote %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestVote", args, reply); !ok {
@@ -541,6 +543,7 @@ func (rf *Raft) startAppendEntries() {
 		// 移出goroutine，这里存在并发情况，可能currentTerm受到其它RPC而增加了，并非最开始的term
 		nextLogEntryIndex := rf.nextIndex[peerIdx]
 		args := &AppendEntriesArgs{
+			Seq:          rf.rpcSequence,
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
 			PrevLogIndex: nextLogEntryIndex - 1,
@@ -548,7 +551,7 @@ func (rf *Raft) startAppendEntries() {
 			Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
 			LeaderCommit: rf.commitIndex,
 		}
-		reply := &AppendEntriesReply{Seq: rf.rpcSequence}
+		reply := &AppendEntriesReply{}
 		go func() {
 			DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
