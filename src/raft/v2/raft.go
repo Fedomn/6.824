@@ -714,7 +714,8 @@ func (rf *Raft) getFirstIndexOfTerm(foundTerm int) int {
 			return i
 		}
 	}
-	panic(fmt.Sprintf("not found first index of term %v", foundTerm))
+	DPrintf(rf.me, "not found first index of term %v, so return index=1", foundTerm)
+	return 1
 }
 
 func (rf *Raft) setNextIndexAndMatchIndex(peerIdx int, sentEntriesLen int) {
