@@ -8,7 +8,7 @@ run: clean
 	go test -run ${RUN_NAME} -race -failfast -count 10 > testrun.log
 
 COUNT = 200
-TEST_NAME = "2C"
+TEST_NAME = "2A|2B|2C"
 #TEST_NAME = "2A|TestBasicAgree2B|TestRPCBytes2B|TestFailAgree2B|TestFailNoAgree2B|TestConcurrentStarts2B|TestFailNoAgree2B|TestConcurrentStarts2B"
 
 test: clean
