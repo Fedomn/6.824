@@ -206,12 +206,23 @@ Task:
 - 完成raft.go里的persist()和readPersist()方法
 - 在需要的地方调用persist()方法
 
+#### Part 2D log compaction
 
+snapshot作用：
 
+- 让raft减少log占用空间
+- 落后的raft，可以通过snapshot快速追上leader
 
+Task：
 
+实现Snapshot、CondInstallSnapshot、InstallSnapshot RPC
 
+Hits：
 
-
+- send the entire snapshot in a single InstallSnapshot RPC
+- old log entries必须没有reachable references，才能被GC掉
+- raft logs不能在通过数组index来决定log entry index，需要重新实现
+- 即使log trimmed了，AppendEntries仍然需要term和index，需要考虑snapshot里包含lastIncludedTerm/lastIncludedIndex
+- raft必须store每个snapshot在persister object中SaveStateAndSnapshot方法
 
 
