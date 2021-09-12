@@ -219,9 +219,16 @@ func (rf *Raft) Step(e Event) error {
 			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
 		case args.Term == rf.currentTerm:
-			DPrintf(rf.me, "%s %v<-%v currentTerm %v == term %v, already votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
-			reply.Term = rf.currentTerm
-			reply.VoteGranted = false
+			if rf.votedFor != None && rf.votedFor != args.CandidateId {
+				DPrintf(rf.me, "%s %v<-%v currentTerm %v == term %v, already votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
+				reply.Term = rf.currentTerm
+				reply.VoteGranted = false
+			} else {
+				rf.votedFor = args.CandidateId
+				reply.Term = rf.currentTerm
+				reply.VoteGranted = true
+				DPrintf(rf.me, "%s %v<-%v currentTerm %v == term %v, haven't vote, will votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
+			}
 		case args.Term > rf.currentTerm:
 			passCheck := true
 			for loop := true; loop; loop = false {
