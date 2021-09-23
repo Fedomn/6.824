@@ -78,6 +78,11 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 func (rf *Raft) persist() {
+	data := rf.encodeRaftState()
+	rf.persister.SaveRaftState(data)
+}
+
+func (rf *Raft) encodeRaftState() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	if e.Encode(rf.currentTerm) != nil ||
@@ -86,7 +91,7 @@ func (rf *Raft) persist() {
 		panic("persist encounter error")
 	}
 	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	return data
 }
 
 func (rf *Raft) readPersist(data []byte) {
@@ -128,12 +133,14 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 		return
 	}
 
-	rf.log = append(rf.log, LogEntry{
+	newLogEntry := LogEntry{
 		Command: command,
 		Term:    rf.currentTerm,
-	})
-	index = rf.getLastLogIndex()
-	term = rf.currentTerm
+		Index:   rf.getLastLogIndex() + 1,
+	}
+	rf.log = append(rf.log, newLogEntry)
+	index = newLogEntry.Index
+	term = newLogEntry.Term
 	return
 }
 
@@ -340,10 +347,11 @@ func (rf *Raft) Step(e Event) error {
 					logEntry := LogEntry{
 						Command: entry.Command,
 						Term:    entry.Term,
+						Index:   entry.Index,
 					}
 					newLog = append(newLog, logEntry)
 				}
-				rf.log = append(rf.log[:args.PrevLogIndex+1], newLog...)
+				rf.log = append(rf.log[:rf.getLogEntryIndex(args.PrevLogIndex)+1], newLog...)
 
 				// 如果leader commit index > follower 本地存储的 commit index，
 				// 则更新 follower本地的 commitIndex = min(leaderCommit , 将要保存的logs中最后一个log entry index)
@@ -639,7 +647,7 @@ func (rf *Raft) startAppendEntries() {
 		TPrintf(rf.me, "AppendEntries has uncommitted log entries")
 		//TPrintf(rf.me, "Debug TestFigure8Unreliable2C AppendEntries has uncommitted log entries, logs:%v", rf.log)
 	}
-	rf.setNextIndexAndMatchIndex(rf.me, len(rf.getEntriesToEnd(rf.nextIndex[rf.me])))
+	rf.setNextIndexAndMatchIndex(rf.me, rf.getLastLogIndex()-rf.nextIndex[rf.me]+1)
 
 	for idx := range rf.peers {
 		if idx == rf.me {
@@ -648,13 +656,17 @@ func (rf *Raft) startAppendEntries() {
 		peerIdx := idx
 		// 移出goroutine，这里存在并发情况，可能currentTerm受到其它RPC而增加了，并非最开始的term
 		nextLogEntryIndex := rf.nextIndex[peerIdx]
+		entries := make([]LogEntry, 0)
+		if nextLogEntryIndex <= rf.getLastLogIndex() {
+			entries = rf.getEntriesToEnd(nextLogEntryIndex)
+		}
 		args := &AppendEntriesArgs{
 			Seq:          rf.rpcSequence,
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
 			PrevLogIndex: nextLogEntryIndex - 1,
 			PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
-			Entries:      rf.getEntriesToEnd(nextLogEntryIndex),
+			Entries:      entries,
 			LeaderCommit: rf.commitIndex,
 		}
 		reply := &AppendEntriesReply{}
@@ -693,36 +705,62 @@ func (rf *Raft) applyLogsWithLock() {
 	rf.persist()
 }
 
+func (rf *Raft) getLogEntryIndex(logIndex int) int {
+	firstIndex := rf.getFirstLogEntry().Index
+	lastIndex := rf.getLastLogEntry().Index
+	if logIndex < firstIndex || logIndex > lastIndex {
+		panic(fmt.Sprintf("Raft:%v got invalid logIndex:%v firstIndex:%v lastIndex:%v",
+			rf.me, logIndex, firstIndex, lastIndex))
+	}
+	return logIndex - firstIndex
+}
+
 func (rf *Raft) getLogEntry(logIndex int) LogEntry {
-	return rf.log[logIndex]
+	return rf.log[rf.getLogEntryIndex(logIndex)]
 }
 
 func (rf *Raft) getEntriesToEnd(startIdx int) []LogEntry {
 	// [startIdx, endIdx)
-	orig := rf.log[startIdx:]
+	orig := rf.log[rf.getLogEntryIndex(startIdx):]
 	x := make([]LogEntry, len(orig))
 	copy(x, orig)
 	return x
 }
 
+func (rf *Raft) getLastLogEntry() LogEntry {
+	if len(rf.log) < 1 {
+		panic(fmt.Sprintf("Raft:%v got empty log", rf.me))
+	}
+	return rf.log[len(rf.log)-1]
+}
+
 func (rf *Raft) getLastLogIndex() int {
-	return len(rf.log) - 1
+	return rf.getLastLogEntry().Index
 }
 
 func (rf *Raft) getLastLogIndexTerm() (int, int) {
-	lastIndex := rf.getLastLogIndex()
-	return lastIndex, rf.getLogEntry(lastIndex).Term
+	lastLogEntry := rf.getLastLogEntry()
+	return lastLogEntry.Index, lastLogEntry.Term
+}
+
+func (rf *Raft) getFirstLogEntry() LogEntry {
+	if len(rf.log) < 1 {
+		panic(fmt.Sprintf("Raft:%v got empty log", rf.me))
+	}
+	return rf.log[0]
 }
 
 func (rf *Raft) getFirstIndexOfTerm(foundTerm int) int {
 	for i := 0; i < len(rf.log)-1; i++ {
-		if rf.log[i].Term == foundTerm {
-			DPrintf(rf.me, "foundTerm:%v, got:%v", foundTerm, i)
-			return i
+		logEntry := rf.log[i]
+		if logEntry.Term == foundTerm {
+			DPrintf(rf.me, "foundTerm:%v, returnIndex:%v", foundTerm, logEntry.Index)
+			return logEntry.Index
 		}
 	}
-	DPrintf(rf.me, "not found first index of term %v, so return index=1", foundTerm)
-	return 1
+	firstIndex := rf.getFirstLogEntry().Index
+	DPrintf(rf.me, "not found first index of term %v, so return firstIndex+1=%v", foundTerm, firstIndex+1)
+	return firstIndex + 1
 }
 
 func (rf *Raft) setNextIndexAndMatchIndex(peerIdx int, sentEntriesLen int) {
@@ -739,7 +777,7 @@ func (rf *Raft) calcCommitIndex() int {
 	for N := rf.getLastLogIndex(); N > rf.commitIndex; N-- {
 		replicatedCnt := 0
 		for i := 0; i < len(rf.peers); i++ {
-			if rf.matchIndex[i] >= N && rf.log[N].Term == rf.currentTerm {
+			if rf.matchIndex[i] >= N && rf.getLogEntry(N).Term == rf.currentTerm {
 				replicatedCnt++
 			}
 			if replicatedCnt >= majorityCount {
@@ -750,38 +788,46 @@ func (rf *Raft) calcCommitIndex() int {
 
 	return rf.commitIndex
 }
+func (rf *Raft) initStates(peersNum int, persister *Persister) {
+	// initialize from state persisted before a crash
+	// including: currentTerm / votedFor / log
+	raftState := persister.ReadRaftState()
 
-func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg, eventCh chan Event) *Raft {
-	rf := &Raft{}
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
+	if raftState == nil || len(raftState) < 1 {
+		rf.currentTerm = 0
+		rf.votedFor = None
+		rf.rpcSequence = 0
+		rf.log = make([]LogEntry, 0)
+		rf.log = append(rf.log, LogEntry{nil, 0, 0})
+	} else {
+		rf.readPersist(raftState)
+		DPrintf(rf.me, "Raft already recover")
+	}
 
-	rf.state = StateFollower
-	rf.currentTerm = 0
-	rf.votedFor = None
-	rf.log = make([]LogEntry, 0)
-	rf.log = append(rf.log, LogEntry{}) // first empty logEntry
-	rf.commitIndex = 0
-	rf.lastApplied = 0
-	rf.nextIndex = make([]int, len(peers))
-	rf.matchIndex = make([]int, len(peers))
-	for i := 0; i < len(rf.peers); i++ {
+	firstLog := rf.log[0]
+	// reset commitIndex / lastApplied
+	rf.commitIndex = firstLog.Index
+	rf.lastApplied = firstLog.Index
+	// reset nextIndex / matchIndex
+	rf.nextIndex = make([]int, peersNum)
+	rf.matchIndex = make([]int, peersNum)
+	for i := 0; i < peersNum; i++ {
 		rf.nextIndex[i] = rf.commitIndex + 1
 	}
-	for i := 0; i < len(rf.peers); i++ {
+	for i := 0; i < peersNum; i++ {
 		rf.matchIndex[i] = 0
 	}
 
+	DPrintf(rf.me, "Raft init success, log:%v commitIndex:%v lastApplied:%v nextIndex:%v",
+		rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex)
+}
+
+func (rf *Raft) initInternalUsed() {
 	rf.electionElapsed = 0
 	rf.heartbeatElapsed = 0
 	rf.electionTimeout = electionTimeout
 	rf.heartbeatTimeout = heartbeatsTimeout
 	rf.randomizedElectionTimeout = 0
-
-	rf.eventCh = eventCh
-
-	rf.applyCh = applyCh
 
 	rf.waitRequestVoteDone = make(map[int]chan struct{})
 	for i := 0; i < len(rf.peers); i++ {
@@ -795,11 +841,22 @@ func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh ch
 	for i := 0; i < len(rf.peers); i++ {
 		rf.waitAppendEntriesDone[i] = make(chan struct{})
 	}
-	rf.killCh = make(chan struct{})
-	rf.rpcSequence = 0
 
-	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
+	rf.killCh = make(chan struct{})
+}
+
+func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg, eventCh chan Event) *Raft {
+	rf := &Raft{}
+	rf.peers = peers
+	rf.persister = persister
+	rf.me = me
+	rf.state = StateFollower
+
+	rf.initStates(len(peers), persister)
+	rf.initInternalUsed()
+
+	rf.eventCh = eventCh
+	rf.applyCh = applyCh
 
 	return rf
 }

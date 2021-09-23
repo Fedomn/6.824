@@ -2,14 +2,12 @@
 
 default: test
 
-RUN_NAME="TestFigure8Unreliable2C"
-
-run: clean
-	go test -run ${RUN_NAME} -race -failfast -count 10 > testrun.log
-
 COUNT = 200
 TEST_NAME = "2A|2B|2C"
 #TEST_NAME = "2A|TestBasicAgree2B|TestRPCBytes2B|TestFailAgree2B|TestFailNoAgree2B|TestConcurrentStarts2B|TestFailNoAgree2B|TestConcurrentStarts2B"
+
+run: clean
+	go test -run ${TEST_NAME} -race -failfast > testrun.log
 
 test: clean
 	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
