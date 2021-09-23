@@ -141,6 +141,7 @@ func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) 
 	rf.log = append(rf.log, newLogEntry)
 	index = newLogEntry.Index
 	term = newLogEntry.Term
+	rf.persist()
 	return
 }
 
@@ -214,6 +215,7 @@ func (rf *Raft) becomeLeader() {
 func (rf *Raft) Step(e Event) error {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	switch e.Type {
 	case EventVote, EventPreVote:
@@ -282,7 +284,6 @@ func (rf *Raft) Step(e Event) error {
 		if reply.VoteGranted {
 			rf.electionElapsed = 0
 		}
-		rf.persist()
 		switch e.Type {
 		case EventVote:
 			rf.waitRequestVoteDone[args.CandidateId] <- struct{}{}
@@ -369,7 +370,6 @@ func (rf *Raft) Step(e Event) error {
 		if reply.Success {
 			rf.electionElapsed = 0
 		}
-		rf.persist()
 		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
 		return nil
 	default:
@@ -702,7 +702,6 @@ func (rf *Raft) applyLogsWithLock() {
 	if rf.lastApplied+1 <= rf.commitIndex {
 		DPrintf(rf.me, "Applied entries: %v~%v", rf.lastApplied+1, rf.commitIndex)
 	}
-	rf.persist()
 }
 
 func (rf *Raft) getLogEntryIndex(logIndex int) int {
