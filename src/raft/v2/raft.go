@@ -69,6 +69,8 @@ type Raft struct {
 
 	// for tester
 	applyCh chan ApplyMsg
+	// for internal async apply
+	applyCond *sync.Cond
 }
 
 func (rf *Raft) GetState() (int, bool) {
@@ -360,7 +362,9 @@ func (rf *Raft) Step(e Event) error {
 					// 存在一种情况，follower落后leader很多，这次appendEntries还未补全所有log，
 					// 所以 这次follower的committedIndex为最后一个logIndex
 					rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
-					go rf.applyLogsWithLock()
+
+					// 真正的异步apply在 asyncApplier
+					rf.applyCond.Signal()
 				}
 			} else {
 				reply.Success = false
@@ -497,16 +501,12 @@ func stepLeader(rf *Raft, e Event) error {
 		// maybeCommit
 		calcCommitIndex := rf.calcCommitIndex()
 		if rf.commitIndex != calcCommitIndex {
-			DPrintf(rf.me, "AppendEntries %v->%v maybe commit, before:%v after calc commitIndex:%v, matchIndex: %v",
+			DPrintf(rf.me, "AppendEntries %v->%v leader maybe commit, before:%v after calc commitIndex:%v, matchIndex: %v",
 				e.From, e.To, rf.commitIndex, calcCommitIndex, rf.matchIndex)
 			rf.commitIndex = calcCommitIndex
 
-			deltaLogsCount := rf.commitIndex - rf.lastApplied
-			if deltaLogsCount > 0 {
-				DPrintf(rf.me, "AppendEntries %v->%v will apply %v - %v = delta %v",
-					e.From, e.To, rf.commitIndex, rf.lastApplied, deltaLogsCount)
-				go rf.applyLogsWithLock()
-			}
+			// 真正的异步apply在 asyncApplier
+			rf.applyCond.Signal()
 		}
 	default:
 		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
@@ -688,22 +688,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	<-rf.waitAppendEntriesDone[args.LeaderId]
 }
 
-func (rf *Raft) applyLogsWithLock() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-		rf.applyCh <- ApplyMsg{
-			CommandValid: true,
-			Command:      rf.getLogEntry(i).Command,
-			CommandIndex: i,
-		}
-		rf.lastApplied++
-	}
-	if rf.lastApplied+1 <= rf.commitIndex {
-		DPrintf(rf.me, "Applied entries: %v~%v", rf.lastApplied+1, rf.commitIndex)
-	}
-}
-
 func (rf *Raft) getLogEntryIndex(logIndex int) int {
 	firstIndex := rf.getFirstLogEntry().Index
 	lastIndex := rf.getLastLogEntry().Index
@@ -787,6 +771,42 @@ func (rf *Raft) calcCommitIndex() int {
 
 	return rf.commitIndex
 }
+
+func (rf *Raft) asyncApplier() {
+	for !rf.killed() {
+		rf.mu.Lock()
+		for rf.lastApplied >= rf.commitIndex {
+			rf.applyCond.Wait()
+			// 这里取反，也就是说，只有当rf.lastApplied < rf.commitIndex时，才执行到下一步
+		}
+		commitIndex := rf.commitIndex
+		needAppliedEntries := rf.getEntries(rf.lastApplied+1, commitIndex)
+		deltaCount := commitIndex - rf.lastApplied
+		DPrintf(rf.me, "%s will apply %v - %v = delta %v", rf.state, commitIndex, rf.lastApplied, deltaCount)
+		// DPrintf(rf.me, "before log:%v, need entries:%v", rf.log, needAppliedEntries)
+		rf.mu.Unlock()
+		for _, entry := range needAppliedEntries {
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      entry.Command,
+				CommandIndex: entry.Index,
+			}
+		}
+		rf.mu.Lock()
+		// TODO need to consider more corner cases
+		rf.lastApplied += deltaCount
+		rf.mu.Unlock()
+	}
+}
+
+func (rf *Raft) getEntries(startIdx, endIdx int) []LogEntry {
+	// [startIdx, endIdx)
+	orig := rf.log[rf.getLogEntryIndex(startIdx) : rf.getLogEntryIndex(endIdx)+1]
+	x := make([]LogEntry, len(orig))
+	copy(x, orig)
+	return x
+}
+
 func (rf *Raft) initStates(peersNum int, persister *Persister) {
 	// initialize from state persisted before a crash
 	// including: currentTerm / votedFor / log
@@ -818,7 +838,7 @@ func (rf *Raft) initStates(peersNum int, persister *Persister) {
 	}
 
 	DPrintf(rf.me, "Raft init success, log:%v commitIndex:%v lastApplied:%v nextIndex:%v",
-		rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex)
+		debugLog(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex)
 }
 
 func (rf *Raft) initInternalUsed() {
@@ -856,6 +876,8 @@ func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh ch
 
 	rf.eventCh = eventCh
 	rf.applyCh = applyCh
+	rf.applyCond = sync.NewCond(&rf.mu)
+	go rf.asyncApplier()
 
 	return rf
 }
