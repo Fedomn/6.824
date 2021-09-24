@@ -3,6 +3,7 @@ package v2
 import (
 	"6.824/labgob"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 
@@ -121,8 +122,26 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	return true
 }
 
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
+// 这里只传一个snapshot的原因：简化kv模型，由于test里每次cfg.one一个值，相当于对一个相同的key不停的set value
+// 因此，我们只需要设置最后一次的value=snapshot就可以
+// 能够调用这个方法是由于，向applyCh里放入CommandValid类型的ApplyMsg，达到一定size则执行，不论raft是什么state
+func (rf *Raft) Snapshot(snapshotIndex int, snapshot []byte) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	DPrintf(rf.me, "Snapshot begin, snapshotIndex:%v", snapshotIndex)
+
+	// 如果snapshot index在commitIndex之后，说明还不能打snapshot，必须是committed的log才能认为可以snapshot
+	if snapshotIndex > rf.commitIndex {
+		DPrintf(rf.me, "Snapshot snapshotIndex:%v > commitIndex:%v, so reject this snapshot operation",
+			snapshotIndex, rf.commitIndex)
+		return
+	}
+
+	// shrink logs
+	rf.log = rf.getEntriesToEnd(snapshotIndex)
+	rf.log[0].Command = nil
+	rf.persister.SaveStateAndSnapshot(rf.encodeRaftState(), snapshot)
+	DPrintf(rf.me, "Snapshot snapshotIndex:%v snapshot:%v, after log:%v", snapshotIndex, binary.BigEndian.Uint32(snapshot), rf.log)
 }
 
 func (rf *Raft) Start(command interface{}) (index int, term int, isLeader bool) {
