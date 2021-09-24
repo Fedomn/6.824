@@ -3,8 +3,7 @@
 default: test
 
 COUNT = 200
-TEST_NAME = "2A|2B|2C"
-#TEST_NAME = "2A|TestBasicAgree2B|TestRPCBytes2B|TestFailAgree2B|TestFailNoAgree2B|TestConcurrentStarts2B|TestFailNoAgree2B|TestConcurrentStarts2B"
+TEST_NAME = "2A|2B|2C|2D"
 
 run: clean
 	go test -run ${TEST_NAME} -race -failfast > testrun.log
