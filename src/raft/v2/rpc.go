@@ -16,6 +16,8 @@ const (
 	EventVoteResp
 	EventApp
 	EventAppResp
+	EventSnap
+	EventSnapResp
 	EventPreHup
 	EventPreVote
 	EventPreVoteResp
@@ -35,6 +37,10 @@ func (r EventType) String() string {
 		return "EventApp"
 	case EventAppResp:
 		return "EventAppResp"
+	case EventSnap:
+		return "EventSnap"
+	case EventSnapResp:
+		return "EventSnapResp"
 	case EventPreHup:
 		return "EventPreHup"
 	case EventPreVote:
@@ -100,6 +106,20 @@ type AppendEntriesReply struct {
 	Term          int  // replied server's term
 	Success       bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
 	ConflictIndex int
+}
+
+type InstallSnapshotArgs struct {
+	Seq               uint32 // rpc sequence
+	Term              int    // leader's term
+	LeaderId          int    // leader id
+	LastIncludedIndex int
+	LastIncludedTerm  int
+	Data              []byte
+}
+
+type InstallSnapshotReply struct {
+	Term    int  // replied server's term
+	Success bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
 }
 
 // None is a placeholder node ID used when there is no leader.

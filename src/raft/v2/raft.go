@@ -117,8 +117,34 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-	// Your code here (2D).
+// raft上层应用会调用它，来判断是否需要install snapshot，并设置raft state
+// 这里也可以一致返回true，这样上层应用会重复install snapshot
+// 正常能够调用这个方法由于，向applyCh里放入SnapshotValid类型的ApplyMsg，也就是follower被leader主动InstallSnapshot RPC后
+func (rf *Raft) CondInstallSnapshot(snapshotTerm int, snapshotIndex int, snapshot []byte) bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	DPrintf(rf.me, "CondInstallSnapshot begin, snapshotIndex:%v commitIndex:%v lastApplied:%v",
+		snapshotIndex, rf.commitIndex, rf.lastApplied)
+	if snapshotIndex <= rf.commitIndex {
+		// 一旦进入commitIndex，最终都会被apply，因此也不需要install snapshot了
+		DPrintf(rf.me, "CondInstallSnapshot outdated snapshotIndex:%v <= commitIndex:%v, no need to install snapshot", snapshotIndex, rf.commitIndex)
+		return false
+	}
+
+	// rf.commitIndex < snapshotIndex
+	if snapshotIndex > rf.getLastLogIndex() {
+		rf.log = make([]LogEntry, 1)
+	} else {
+		rf.log = rf.getEntriesToEnd(snapshotIndex)
+	}
+	rf.log[0].Command = nil
+	rf.log[0].Term = snapshotTerm
+	rf.log[0].Index = snapshotIndex
+	rf.commitIndex = snapshotIndex
+	rf.lastApplied = snapshotIndex
+
+	rf.persister.SaveStateAndSnapshot(rf.encodeRaftState(), snapshot)
+	DPrintf(rf.me, "CondInstallSnapshot installed snapshot success, log:%v, commitIndex:%v", rf.log, rf.commitIndex)
 	return true
 }
 
@@ -395,6 +421,33 @@ func (rf *Raft) Step(e Event) error {
 		}
 		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
 		return nil
+	case EventSnap:
+		args := e.Args.(*InstallSnapshotArgs)
+		reply := e.Reply.(*InstallSnapshotReply)
+		switch {
+		case args.Term < rf.currentTerm:
+			DPrintf(rf.me, "InstallSnapshot %v<-%v currentTerm %v > term %v, ignore lower term",
+				rf.me, args.LeaderId, rf.currentTerm, args.Term)
+			reply.Term = rf.currentTerm
+			reply.Success = false
+		case args.Term >= rf.currentTerm:
+			if rf.state != StateFollower {
+				DPrintf(rf.me, "InstallSnapshot %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
+					rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
+				rf.becomeFollower(args.Term, None)
+			}
+			// 这里不需要consistency check，因为一致性检测的结果是为了计算conflictIndex，让leader快速设置nextIndex，继续下一层appendEntries RPC
+			// 但对于InstallSnapshot来说，不需要conflictIndex，因为follower要无条件接受leader的snapshot
+			reply.Term = args.Term
+			reply.Success = true
+			// 这里先同步apply snapshot，等待上层CondInstallSnapshot成功后，apply到应用层
+			rf.applySnapshot(args.Data, args.LastIncludedTerm, args.LastIncludedIndex)
+		}
+		if reply.Success {
+			rf.electionElapsed = 0
+		}
+		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
+		return nil
 	default:
 		return rf.step(rf, e)
 	}
@@ -526,6 +579,29 @@ func stepLeader(rf *Raft, e Event) error {
 
 			// 真正的异步apply在 asyncApplier
 			rf.applyCond.Signal()
+		}
+	case EventSnapResp:
+		args := e.Args.(*InstallSnapshotArgs)
+		reply := e.Reply.(*InstallSnapshotReply)
+		if args.Seq < rf.rpcSequence {
+			TPrintf(rf.me, "InstallSnapshot %v->%v RPC got old rpcSequence:%v current rpcSequence:%v, will ignore it", e.From, e.To, args.Seq, rf.rpcSequence)
+			return nil
+		}
+		TPrintf(rf.me, "InstallSnapshot %v->%v RPC got %+v", e.From, e.To, reply)
+		if reply == nil {
+			return nil
+		}
+		if reply.Term > rf.currentTerm {
+			DPrintf(rf.me, "InstallSnapshot %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
+			rf.becomeFollower(reply.Term, None)
+			return nil
+		}
+		if reply.Success {
+			rf.setNextIndexAndMatchIndexAfterSnapshot(e.From)
+			DPrintf(rf.me, "InstallSnapshot %v->%v RPC got success, so set nextIndex %v, matchIndex %v", e.From, e.To, rf.nextIndex, rf.matchIndex)
+		} else {
+			DPrintf(rf.me, "InstallSnapshot %v->%v RPC got false, so do nothing and install again, %v", e.From, e.To)
+			return nil
 		}
 	default:
 		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
@@ -675,31 +751,75 @@ func (rf *Raft) startAppendEntries() {
 		peerIdx := idx
 		// 移出goroutine，这里存在并发情况，可能currentTerm受到其它RPC而增加了，并非最开始的term
 		nextLogEntryIndex := rf.nextIndex[peerIdx]
-		entries := make([]LogEntry, 0)
-		if nextLogEntryIndex <= rf.getLastLogIndex() {
-			entries = rf.getEntriesToEnd(nextLogEntryIndex)
-		}
-		args := &AppendEntriesArgs{
-			Seq:          rf.rpcSequence,
-			Term:         rf.currentTerm,
-			LeaderId:     rf.me,
-			PrevLogIndex: nextLogEntryIndex - 1,
-			PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
-			Entries:      entries,
-			LeaderCommit: rf.commitIndex,
-		}
-		reply := &AppendEntriesReply{}
-		go func() {
-			DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
-			if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
-				if !rf.killed() {
-					TPrintf(rf.me, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
-				}
-			} else {
-				rf.send(Event{Type: EventAppResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
+		prevLogIndex := nextLogEntryIndex - 1
+		if prevLogIndex < rf.getFirstLogIndex() {
+			// install snapshot
+			args := &InstallSnapshotArgs{
+				Seq:               rf.rpcSequence,
+				Term:              rf.currentTerm,
+				LeaderId:          rf.me,
+				LastIncludedIndex: rf.getFirstLogIndex(),
+				LastIncludedTerm:  rf.getFirstLogTerm(),
+				Data:              rf.persister.ReadSnapshot(),
 			}
-		}()
+			reply := &InstallSnapshotReply{}
+			go func() {
+				DPrintf(rf.me, "InstallSnapshot %v->%v send RPC %+v", rf.me, peerIdx, args)
+				if ok := rf.peers[peerIdx].Call("Raft.InstallSnapshot", args, reply); !ok {
+					if !rf.killed() {
+						TPrintf(rf.me, "InstallSnapshot %v->%v RPC not reply", rf.me, peerIdx)
+					}
+				} else {
+					rf.send(Event{Type: EventSnapResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
+				}
+			}()
+		} else {
+			// append entries
+			entries := make([]LogEntry, 0)
+			if nextLogEntryIndex <= rf.getLastLogIndex() {
+				entries = rf.getEntriesToEnd(nextLogEntryIndex)
+			}
+			args := &AppendEntriesArgs{
+				Seq:          rf.rpcSequence,
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: nextLogEntryIndex - 1,
+				PrevLogTerm:  rf.getLogEntry(nextLogEntryIndex - 1).Term,
+				Entries:      entries,
+				LeaderCommit: rf.commitIndex,
+			}
+			reply := &AppendEntriesReply{}
+			go func() {
+				DPrintf(rf.me, "AppendEntries %v->%v send RPC %+v", rf.me, peerIdx, args)
+				if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
+					if !rf.killed() {
+						TPrintf(rf.me, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
+					}
+				} else {
+					rf.send(Event{Type: EventAppResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
+				}
+			}()
+		}
 	}
+}
+
+func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	rf.send(Event{Type: EventSnap, From: args.LeaderId, To: rf.me, Term: args.Term, Args: args, Reply: reply})
+	<-rf.waitAppendEntriesDone[args.LeaderId]
+}
+
+func (rf *Raft) applySnapshot(snapshot []byte, snapshotTerm, snapshotIndex int) {
+	rf.applyCh <- ApplyMsg{
+		SnapshotValid: true,
+		Snapshot:      snapshot,
+		SnapshotTerm:  snapshotTerm,
+		SnapshotIndex: snapshotIndex,
+	}
+}
+
+func (rf *Raft) setNextIndexAndMatchIndexAfterSnapshot(peerIdx int) {
+	rf.nextIndex[peerIdx] = rf.getFirstLogIndex() + 1
+	rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx] - 1
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -750,6 +870,14 @@ func (rf *Raft) getFirstLogEntry() LogEntry {
 		panic(fmt.Sprintf("Raft:%v got empty log", rf.me))
 	}
 	return rf.log[0]
+}
+
+func (rf *Raft) getFirstLogIndex() int {
+	return rf.getFirstLogEntry().Index
+}
+
+func (rf *Raft) getFirstLogTerm() int {
+	return rf.getFirstLogEntry().Term
 }
 
 func (rf *Raft) getFirstIndexOfTerm(foundTerm int) int {
