@@ -1,4 +1,4 @@
-package v2
+package raft
 
 //
 // support for Raft and kvraft to save persistent

@@ -1,4 +1,4 @@
-package v2
+package raft
 
 import (
 	"6.824/labgob"
