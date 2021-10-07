@@ -207,6 +207,7 @@ func (rf *Raft) becomeFollower(term int, lead int) {
 	rf.state = StateFollower
 	rf.tick = rf.tickElection
 	rf.step = stepFollower
+	rf.lead = lead
 	DPrintf(rf.me, "Raft %v became follower at term %v", rf.me, rf.currentTerm)
 	rf.persist()
 }
@@ -245,6 +246,7 @@ func (rf *Raft) becomeLeader() {
 	rf.state = StateLeader
 	rf.tick = rf.tickHeartbeat
 	rf.step = stepLeader
+	rf.lead = rf.me
 
 	for i := 0; i < len(rf.peers); i++ {
 		rf.nextIndex[i] = rf.commitIndex + 1
@@ -352,7 +354,7 @@ func (rf *Raft) Step(e Event) error {
 			if rf.state != StateFollower {
 				DPrintf(rf.me, "AppendEntries %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
 					rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
-				rf.becomeFollower(args.Term, None)
+				rf.becomeFollower(args.Term, args.LeaderId)
 			}
 			// consistency check：prevLogIndex所在的log entry，它的term不等于prevLogTerm。
 			passCheck := true
@@ -418,6 +420,7 @@ func (rf *Raft) Step(e Event) error {
 		}
 		if reply.Success {
 			rf.electionElapsed = 0
+			rf.lead = args.LeaderId
 		}
 		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
 		return nil
@@ -434,7 +437,7 @@ func (rf *Raft) Step(e Event) error {
 			if rf.state != StateFollower {
 				DPrintf(rf.me, "InstallSnapshot %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately",
 					rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
-				rf.becomeFollower(args.Term, None)
+				rf.becomeFollower(args.Term, args.LeaderId)
 			}
 			// 这里不需要consistency check，因为一致性检测的结果是为了计算conflictIndex，让leader快速设置nextIndex，继续下一层appendEntries RPC
 			// 但对于InstallSnapshot来说，不需要conflictIndex，因为follower要无条件接受leader的snapshot
@@ -445,6 +448,7 @@ func (rf *Raft) Step(e Event) error {
 		}
 		if reply.Success {
 			rf.electionElapsed = 0
+			rf.lead = args.LeaderId
 		}
 		rf.waitAppendEntriesDone[args.LeaderId] <- struct{}{}
 		return nil
