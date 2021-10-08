@@ -4,30 +4,59 @@ const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
+	ErrOutdated    = "ErrOutdated"
 )
 
-type Err string
+type OpType int
 
-// Put or Append
-type PutAppendArgs struct {
-	Key   string
-	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+const (
+	OpGet OpType = iota
+	OpPut
+	OpAppend
+)
+
+func (o OpType) String() string {
+	switch o {
+	case OpGet:
+		return "OpGet"
+	case OpPut:
+		return "OpPut"
+	case OpAppend:
+		return "OpAppend"
+	default:
+		return "unknown"
+	}
 }
 
-type PutAppendReply struct {
-	Err Err
+type CommandArgs struct {
+	OpType      OpType
+	Key         string
+	Value       string
+	ClientId    int64
+	SequenceNum int64
 }
 
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
+func (ca CommandArgs) clone() *CommandArgs {
+	return &CommandArgs{
+		OpType:      ca.OpType,
+		Key:         ca.Key,
+		Value:       ca.Value,
+		ClientId:    ca.ClientId,
+		SequenceNum: ca.SequenceNum,
+	}
 }
 
-type GetReply struct {
-	Err   Err
-	Value string
+type CommandReply struct {
+	Status     string
+	Response   string
+	LeaderHint int
+}
+
+func (cr CommandReply) clone() *CommandReply {
+	return &CommandReply{
+		Status:     cr.Status,
+		Response:   cr.Response,
+		LeaderHint: cr.LeaderHint,
+	}
 }

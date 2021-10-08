@@ -1,13 +1,17 @@
 package kvraft
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+	"time"
+)
 import "crypto/rand"
 import "math/big"
 
-
 type Clerk struct {
-	servers []*labrpc.ClientEnd
-	// You will have to modify this struct.
+	servers     []*labrpc.ClientEnd
+	leaderId    int64
+	clientId    int64
+	sequenceNum int64
 }
 
 func nrand() int64 {
@@ -18,47 +22,66 @@ func nrand() int64 {
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
-	ck := new(Clerk)
-	ck.servers = servers
-	// You'll have to add code here.
-	return ck
+	return &Clerk{
+		servers:     servers,
+		leaderId:    0,
+		clientId:    nrand(),
+		sequenceNum: 0,
+	}
 }
 
-//
-// fetch the current value for a key.
-// returns "" if the key does not exist.
-// keeps trying forever in the face of all other errors.
-//
-// you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-//
 func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
-	return ""
-}
-
-//
-// shared by Put and Append.
-//
-// you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-//
-func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
+	args := &CommandArgs{
+		OpType:      OpGet,
+		Key:         key,
+		ClientId:    ck.clientId,
+		SequenceNum: ck.sequenceNum,
+	}
+	return ck.Command(args)
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	args := &CommandArgs{
+		OpType:      OpPut,
+		Key:         key,
+		Value:       value,
+		ClientId:    ck.clientId,
+		SequenceNum: ck.sequenceNum,
+	}
+	ck.Command(args)
 }
+
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	args := &CommandArgs{
+		OpType:      OpAppend,
+		Key:         key,
+		Value:       value,
+		ClientId:    ck.clientId,
+		SequenceNum: ck.sequenceNum,
+	}
+	ck.Command(args)
+}
+
+// 注意这里的ck.servers里的顺序不能保证，因为存在config.random_handles会打乱顺序
+// 从而导致leaderHint并不是ck.servers里的index
+func (ck *Clerk) Command(args *CommandArgs) string {
+	for {
+		reply := &CommandReply{}
+		ok := ck.servers[ck.leaderId].Call("KVServer.Command", args.clone(), reply)
+		if !ok || reply.Status == ErrWrongLeader || reply.Status == ErrTimeout {
+			//if reply.LeaderHint != raft.None {
+			//	CDPrintf(ck.clientId, "KVClient gotLeaderId:%v from %v, status:%v", reply.LeaderHint, ck.leaderId, reply.Status)
+			//	ck.leaderId = int64(reply.LeaderHint)
+			//} else {
+			//	ck.leaderId = (ck.leaderId + 1) % int64(len(ck.servers))
+			//	CDPrintf(ck.clientId, "KVClient willTryLeaderId:%v, status:%v", ck.leaderId, reply.Status)
+			//}
+			ck.leaderId = (ck.leaderId + 1) % int64(len(ck.servers))
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		CDPrintf(ck.clientId, "KVClient gotReply")
+		ck.sequenceNum++
+		return reply.Response
+	}
 }

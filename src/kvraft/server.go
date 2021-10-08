@@ -4,29 +4,29 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
-	"log"
+	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
+const ExecuteTimeout = time.Second
 
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	OpType      OpType
+	Key         string
+	Value       string
+	ClientId    int64
+	SequenceNum int64
+}
+
+type LastOperation struct {
+	SequenceNum int64
+	Reply       CommandReply
 }
 
 type KVServer struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
@@ -34,37 +34,160 @@ type KVServer struct {
 
 	maxraftstate int // snapshot if log grows this big
 
-	// Your definitions here.
+	lastApplied int
+	kvStore     map[string]string
+	sessions    map[int64]LastOperation
+	notifyCh    map[int]chan CommandReply
 }
 
+func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
+	kv.mu.RLock()
+	if kv.isOutdatedCommand(args.ClientId, args.SequenceNum) {
+		DPrintf(kv.me, "KVServer reply outdated command SequenceNum:%v", args.SequenceNum)
+		reply.Status = ErrOutdated
+		kv.mu.RUnlock()
+		return
+	}
+	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
+		DPrintf(kv.me, "KVServer reply duplicated response")
+		reply.Status = lastReply.Status
+		reply.Response = lastReply.Response
+		kv.mu.RUnlock()
+		return
+	}
+	kv.mu.RUnlock()
 
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	index, _, isLeader := kv.rf.Start(Op{
+		OpType:      args.OpType,
+		Key:         args.Key,
+		Value:       args.Value,
+		ClientId:    args.ClientId,
+		SequenceNum: args.SequenceNum,
+	})
+	if !isLeader {
+		DPrintf(kv.me, "KVServer reply ErrWrongLeader")
+		reply.Status = ErrWrongLeader
+		reply.LeaderHint = kv.rf.GetLeader()
+		return
+	}
+
+	DPrintf(kv.me, "KVServer Leader startCommand args:%+v", args)
+
+	kv.mu.Lock()
+	kv.buildNotifyCh(index)
+	ch := kv.notifyCh[index]
+	kv.mu.Unlock()
+
+	select {
+	case res := <-ch:
+		reply.Status = res.Status
+		reply.Response = res.Response
+	case <-time.After(ExecuteTimeout):
+		reply.Status = ErrTimeout
+		reply.LeaderHint = kv.rf.GetLeader()
+	}
+
+	DPrintf(kv.me, "KVServer Leader gotReply:%v", reply)
+
+	go kv.releaseNotifyCh(index)
 }
 
-func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+func (kv *KVServer) applier() {
+	for !kv.killed() {
+		select {
+		case msg := <-kv.applyCh:
+			kv.mu.Lock()
+			DPrintf(kv.me, "KVServer gotApplyMsg:%+v", msg)
+			switch {
+			case msg.CommandValid:
+				if msg.CommandIndex <= kv.lastApplied {
+					DPrintf(kv.me, "KVServer discard outdated message")
+					kv.mu.Unlock()
+					continue
+				}
+				kv.lastApplied = msg.CommandIndex
+
+				op := msg.Command.(Op)
+				reply := CommandReply{}
+
+				if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {
+					reply = lastReply
+				} else {
+					reply = kv.applyToStore(op)
+					kv.setSession(op.ClientId, op.SequenceNum, reply)
+				}
+
+				if _, isLeader := kv.rf.GetState(); isLeader {
+					kv.notifyCh[msg.CommandIndex] <- reply
+				}
+			case msg.SnapshotValid:
+			default:
+				panic(fmt.Sprintf("Unexpected message %v", msg))
+			}
+			kv.mu.Unlock()
+		}
+	}
 }
 
-//
-// the tester calls Kill() when a KVServer instance won't
-// be needed again. for your convenience, we supply
-// code to set rf.dead (without needing a lock),
-// and a killed() method to test rf.dead in
-// long-running loops. you can also add your own
-// code to Kill(). you're not required to do anything
-// about this, but it may be convenient (for example)
-// to suppress debug output from a Kill()ed instance.
-//
+func (kv *KVServer) isOutdatedCommand(clientId, sequenceNum int64) bool {
+	lastOperation, ok := kv.sessions[clientId]
+	if ok {
+		return lastOperation.SequenceNum > sequenceNum
+	} else {
+		return false
+	}
+}
+
+func (kv *KVServer) getDuplicatedCommandReply(clientId, sequenceNum int64) (bool, CommandReply) {
+	lastOperation, ok := kv.sessions[clientId]
+	if ok {
+		return lastOperation.SequenceNum == sequenceNum, lastOperation.Reply
+	} else {
+		return false, CommandReply{}
+	}
+}
+
+// KVServer可能未收到client的RPC，而是由raft同步过来的command
+func (kv *KVServer) setSession(clientId, sequenceNum int64, reply CommandReply) {
+	DPrintf(kv.me, "KVServer setSession for client:%v sequenceNum:%v", clientId, sequenceNum)
+	kv.sessions[clientId] = LastOperation{sequenceNum, reply}
+}
+
+// 因为这里OpGet也会进入raft log，所以所有的op都会递增log index
+func (kv *KVServer) buildNotifyCh(index int) {
+	kv.notifyCh[index] = make(chan CommandReply)
+	DPrintf(kv.me, "KVServer buildNotifyCh for commandIndex:%v", index)
+}
+
+func (kv *KVServer) releaseNotifyCh(index int) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	delete(kv.notifyCh, index)
+}
+
 func (kv *KVServer) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
-	// Your code here, if desired.
 }
 
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+func (kv *KVServer) applyToStore(op Op) CommandReply {
+	switch op.OpType {
+	case OpGet:
+		return CommandReply{Response: kv.kvStore[op.Key], Status: OK}
+	case OpPut:
+		kv.kvStore[op.Key] = op.Value
+		return CommandReply{Response: kv.kvStore[op.Key], Status: OK}
+	case OpAppend:
+		kv.kvStore[op.Key] += op.Value
+		return CommandReply{Response: kv.kvStore[op.Key], Status: OK}
+	default:
+		panic(fmt.Sprintf("invalid op: %v", op))
+	}
 }
 
 //
@@ -96,6 +219,12 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.StartNode(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.lastApplied = 0
+	kv.kvStore = make(map[string]string)
+	kv.sessions = make(map[int64]LastOperation)
+	kv.notifyCh = make(map[int]chan CommandReply)
+
+	go kv.applier()
 
 	return kv
 }

@@ -80,6 +80,12 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.currentTerm, rf.state == StateLeader
 }
 
+func (rf *Raft) GetLeader() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.lead
+}
+
 func (rf *Raft) persist() {
 	data := rf.encodeRaftState()
 	rf.persister.SaveRaftState(data)
