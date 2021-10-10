@@ -65,7 +65,7 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 		SequenceNum: args.SequenceNum,
 	})
 	if !isLeader {
-		DPrintf(kv.me, "KVServer reply ErrWrongLeader")
+		//DPrintf(kv.me, "KVServer reply ErrWrongLeader")
 		reply.Status = ErrWrongLeader
 		reply.LeaderHint = kv.rf.GetLeader()
 		return
@@ -87,7 +87,7 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 		reply.LeaderHint = kv.rf.GetLeader()
 	}
 
-	DPrintf(kv.me, "KVServer Leader gotReply:%v", reply)
+	//DPrintf(kv.me, "KVServer Leader gotReply:%v", reply)
 
 	go kv.releaseNotifyCh(index)
 }
@@ -97,7 +97,7 @@ func (kv *KVServer) applier() {
 		select {
 		case msg := <-kv.applyCh:
 			kv.mu.Lock()
-			DPrintf(kv.me, "KVServer gotApplyMsg:%+v", msg)
+			//DPrintf(kv.me, "KVServer gotApplyMsg:%+v", msg)
 			switch {
 			case msg.CommandValid:
 				if msg.CommandIndex <= kv.lastApplied {
@@ -149,14 +149,13 @@ func (kv *KVServer) getDuplicatedCommandReply(clientId, sequenceNum int64) (bool
 
 // KVServer可能未收到client的RPC，而是由raft同步过来的command
 func (kv *KVServer) setSession(clientId, sequenceNum int64, reply CommandReply) {
-	DPrintf(kv.me, "KVServer setSession for client:%v sequenceNum:%v", clientId, sequenceNum)
+	//DPrintf(kv.me, "KVServer setSession for client:%v sequenceNum:%v", clientId, sequenceNum)
 	kv.sessions[clientId] = LastOperation{sequenceNum, reply}
 }
 
 // 因为这里OpGet也会进入raft log，所以所有的op都会递增log index
 func (kv *KVServer) buildNotifyCh(index int) {
 	kv.notifyCh[index] = make(chan CommandReply)
-	DPrintf(kv.me, "KVServer buildNotifyCh for commandIndex:%v", index)
 }
 
 func (kv *KVServer) releaseNotifyCh(index int) {

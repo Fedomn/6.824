@@ -1,13 +1,13 @@
 default: run
 
 COUNT = 200
-TEST_NAME = "TestBasic3A"
+TEST_NAME = "TestOnePartition3A"
 
 run: clean
 	go test -run ${TEST_NAME} -race -failfast > testrun.log
 
 test: clean
-	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
+	./go-test-many.sh ${COUNT} 1 ${TEST_NAME}
 
 clean:
 	@rm *.log || true

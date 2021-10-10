@@ -414,6 +414,7 @@ func GenericTestSpeed(t *testing.T, part string, maxraftstate int) {
 	}
 
 	cfg.end()
+	fmt.Printf("Operations completed, dur/numOps: %v/op, timePerOp: %v/op\n", dur/numOps, timePerOp)
 }
 
 func TestBasic3A(t *testing.T) {

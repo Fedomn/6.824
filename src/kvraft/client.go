@@ -2,7 +2,6 @@ package kvraft
 
 import (
 	"6.824/labrpc"
-	"time"
 )
 import "crypto/rand"
 import "math/big"
@@ -69,15 +68,7 @@ func (ck *Clerk) Command(args *CommandArgs) string {
 		reply := &CommandReply{}
 		ok := ck.servers[ck.leaderId].Call("KVServer.Command", args.clone(), reply)
 		if !ok || reply.Status == ErrWrongLeader || reply.Status == ErrTimeout {
-			//if reply.LeaderHint != raft.None {
-			//	CDPrintf(ck.clientId, "KVClient gotLeaderId:%v from %v, status:%v", reply.LeaderHint, ck.leaderId, reply.Status)
-			//	ck.leaderId = int64(reply.LeaderHint)
-			//} else {
-			//	ck.leaderId = (ck.leaderId + 1) % int64(len(ck.servers))
-			//	CDPrintf(ck.clientId, "KVClient willTryLeaderId:%v, status:%v", ck.leaderId, reply.Status)
-			//}
 			ck.leaderId = (ck.leaderId + 1) % int64(len(ck.servers))
-			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		CDPrintf(ck.clientId, "KVClient gotReply")
