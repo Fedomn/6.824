@@ -754,7 +754,7 @@ func (rf *Raft) startRequestVote() {
 			DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v sendRPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestVote", args, reply); !ok {
 				if !rf.killed() {
-					DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
+					TRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
 				}
 			} else {
 				rf.send(Event{Type: EventVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
@@ -784,7 +784,7 @@ func (rf *Raft) startPreRequestVote() {
 			DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v sendRPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestPreVote", args, reply); !ok {
 				if !rf.killed() {
-					DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v RPC not reply", rf.me, peerIdx)
+					TRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v RPC not reply", rf.me, peerIdx)
 				}
 			} else {
 				rf.send(Event{Type: EventPreVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
@@ -829,7 +829,7 @@ func (rf *Raft) startAppendEntries(isHeartbeat bool) {
 				DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v sendRPC %+v", rf.me, peerIdx, args)
 				if ok := rf.peers[peerIdx].Call("Raft.InstallSnapshot", args, reply); !ok {
 					if !rf.killed() {
-						DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v RPC not reply", rf.me, peerIdx)
+						TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v RPC not reply", rf.me, peerIdx)
 					}
 				} else {
 					duration := time.Now().Sub(now)
@@ -867,7 +867,7 @@ func (rf *Raft) startAppendEntries(isHeartbeat bool) {
 				DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v sendRPC %+v", rf.me, peerIdx, args)
 				if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
 					if !rf.killed() {
-						DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
+						TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
 					}
 				} else {
 					duration := time.Now().Sub(now)
