@@ -3,15 +3,23 @@ package raft
 import "fmt"
 
 const tickTimeout = 100 // raft internal tick is 100ms
+
 // test中要求1s内完成election，因此减少这里的electionTimeout，尽量保证1s内多trigger几次election
-const electionTimeout = 5   // random range: [electionTimeout, 2*electionTimeout] * tickTimeout
-const heartbeatsTimeout = 1 // 1*tickTimeout
+const electionTimeout = 6 // random range: [electionTimeout, 2*electionTimeout] * tickTimeout
+
+// follower处理的event的时间必须 < heartbeatsTimeout，否则下次heartbeat导致rpcSeq增加，leader又会abort old rpc
+const heartbeatsTimeout = 3 // 3*tickTimeout
+
+// 防止leader不断的start command，造成rpcSeq不断增加，会一直abort旧的seq response
+// 导致集群中落后的raft会一直追不上leader
+const maxInflightAppCnt = 10
 
 type EventType int32
 
 const (
 	EventHup EventType = iota
 	EventBeat
+	EventReplicate
 	EventVote
 	EventVoteResp
 	EventApp
@@ -29,6 +37,8 @@ func (r EventType) String() string {
 		return "EventHup"
 	case EventBeat:
 		return "EventBeat"
+	case EventReplicate:
+		return "EventReplicate"
 	case EventVote:
 		return "EventVote"
 	case EventVoteResp:
@@ -60,6 +70,7 @@ type Event struct {
 	// need convert to corresponding struct according to eventType
 	Args  interface{}
 	Reply interface{}
+	DoneC chan struct{}
 }
 
 func (e Event) String() string {
@@ -96,10 +107,16 @@ type AppendEntriesArgs struct {
 }
 
 func (a AppendEntriesArgs) String() string {
-	//return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v Entries:%v}",
-	//	a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit, a.Entries)
-	return fmt.Sprintf("{Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v}",
-		a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit)
+	return fmt.Sprintf("{Seq:%v Term:%v LeaderId:%v PrevLogIndex:%v PrevLogTerm:%v LeaderCommit:%v Last3Logs:%v}",
+		a.Seq, a.Term, a.LeaderId, a.PrevLogIndex, a.PrevLogTerm, a.LeaderCommit, debugLast3Logs(a.Entries))
+}
+
+func debugLast3Logs(entries []LogEntry) []LogEntry {
+	if len(entries) <= 3 {
+		return entries
+	} else {
+		return entries[len(entries)-3:]
+	}
 }
 
 type AppendEntriesReply struct {

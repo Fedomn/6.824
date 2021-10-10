@@ -9,7 +9,7 @@ run: clean
 	go test -run ${TEST_NAME} -race -failfast > testrun.log
 
 test: clean
-	./go-test-many.sh ${COUNT} 8 ${TEST_NAME}
+	./go-test-many.sh ${COUNT} 4 ${TEST_NAME}
 
 clean:
 	@rm *.log || true

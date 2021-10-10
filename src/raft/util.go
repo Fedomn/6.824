@@ -34,11 +34,19 @@ var colorMap = map[int]func(format string, a ...interface{}) string{
 
 // Debugging
 const Debug = true
-const Trace = false
+const Trace = true
 
 func DPrintf(rfme int, format string, a ...interface{}) {
 	if Debug {
 		prefix := fmt.Sprintf("[%d] ", rfme)
+		gLog.Println(colorMap[rfme](prefix+format, a...))
+	}
+	return
+}
+
+func DRpcPrintf(rfme int, seq uint32, format string, a ...interface{}) {
+	if Debug {
+		prefix := fmt.Sprintf("[%d] [Seq%d] ", rfme, seq)
 		gLog.Println(colorMap[rfme](prefix+format, a...))
 	}
 	return
@@ -51,16 +59,16 @@ func TPrintf(rfme int, format string, a ...interface{}) {
 	}
 }
 
+func TRpcPrintf(rfme int, seq uint32, format string, a ...interface{}) {
+	if Trace {
+		prefix := fmt.Sprintf("[%d] [Seq%d] ", rfme, seq)
+		gLog.Println(colorMap[rfme](prefix+format, a...))
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
-}
-
-func debugLog(logs []LogEntry) interface{} {
-	if len(logs) > 50 {
-		return "ignore too large logs"
-	}
-	return logs
 }
