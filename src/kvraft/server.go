@@ -49,7 +49,7 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 		return
 	}
 	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
-		DPrintf(kv.me, "KVServer reply duplicated response")
+		DPrintf(kv.me, "KVServer reply duplicated response:%+v", lastReply)
 		reply.Status = lastReply.Status
 		reply.Response = lastReply.Response
 		kv.mu.RUnlock()
@@ -117,7 +117,7 @@ func (kv *KVServer) applier() {
 					kv.setSession(op.ClientId, op.SequenceNum, reply)
 				}
 
-				if _, isLeader := kv.rf.GetState(); isLeader {
+				if currentTerm, isLeader := kv.rf.GetState(); isLeader && msg.CommandTerm == currentTerm {
 					kv.notifyCh[msg.CommandIndex] <- reply
 				}
 			case msg.SnapshotValid:
