@@ -86,6 +86,12 @@ func (rf *Raft) setNextIndexAndMatchIndex(peerIdx int, sentEntriesLen int) {
 	rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx] - 1
 }
 
+func (rf *Raft) setNextIndexAndMatchIndexDirectly(peerIdx int, nextIndex int) {
+	// 防止leader重复发送append RPC导致 nextIndex数组越界
+	rf.nextIndex[peerIdx] = min(nextIndex, rf.getLastLogIndex()+1)
+	rf.matchIndex[peerIdx] = rf.nextIndex[peerIdx] - 1
+}
+
 //If there exists an N such that N > commitIndex, a majority
 //of matchIndex[i] ≥ N, and log[N].term == currentTerm: set commitIndex = N
 func (rf *Raft) calcCommitIndex() int {

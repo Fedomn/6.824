@@ -136,6 +136,7 @@ func (rf *Raft) Step(e Event) error {
 				rf.currentTerm = args.Term
 				reply.Term = rf.currentTerm
 				reply.Success = true
+				reply.NextIndex = args.PrevLogIndex + 1 + len(args.Entries)
 
 				newLog := make([]LogEntry, 0)
 				for _, entry := range args.Entries {
@@ -314,8 +315,8 @@ func stepLeader(rf *Raft, e Event) error {
 	case EventAppResp:
 		args := e.Args.(*AppendEntriesArgs)
 		reply := e.Reply.(*AppendEntriesReply)
-		if args.Seq != rf.sendRpcLatestSeq[e.From].SendSeq {
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
+		if args.Seq <= rf.sendRpcLatestSeq[e.From].RecvSeq {
+			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].RecvSeq)
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
@@ -333,7 +334,7 @@ func stepLeader(rf *Raft, e Event) error {
 			if len(args.Entries) == 0 {
 				DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC success, entries len: %v, so heartbeat will do nothing", e.From, e.To, len(args.Entries))
 			} else {
-				rf.setNextIndexAndMatchIndex(e.From, len(args.Entries))
+				rf.setNextIndexAndMatchIndexDirectly(e.From, reply.NextIndex)
 				DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC success, entries len: %v, so had increased nextIndex %v, matchIndex %v", e.From, e.To, len(args.Entries), rf.nextIndex, rf.matchIndex)
 			}
 		} else {

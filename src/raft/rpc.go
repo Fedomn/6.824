@@ -123,6 +123,7 @@ type AppendEntriesReply struct {
 	Term          int  // replied server's term
 	Success       bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
 	ConflictIndex int
+	NextIndex     int
 }
 
 type InstallSnapshotArgs struct {
