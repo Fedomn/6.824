@@ -20,6 +20,10 @@ type Op struct {
 	SequenceNum int64
 }
 
+func (o Op) String() string {
+	return fmt.Sprintf("[%d:%d] %s<%s,%s>", o.ClientId, o.SequenceNum, o.OpType, o.Key, o.Value)
+}
+
 type LastOperation struct {
 	SequenceNum int64
 	Reply       CommandReply
@@ -43,15 +47,15 @@ type KVServer struct {
 func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 	kv.mu.RLock()
 	if kv.isOutdatedCommand(args.ClientId, args.SequenceNum) {
-		DPrintf(kv.me, "KVServer reply outdated command SequenceNum:%v", args.SequenceNum)
+		DPrintf(kv.me, "KVServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
 		reply.Status = ErrOutdated
 		kv.mu.RUnlock()
 		return
 	}
 	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
-		DPrintf(kv.me, "KVServer reply duplicated response:%+v", lastReply)
 		reply.Status = lastReply.Status
 		reply.Response = lastReply.Response
+		DPrintf(kv.me, "KVServer<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
 		kv.mu.RUnlock()
 		return
 	}
@@ -71,7 +75,7 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 		return
 	}
 
-	DPrintf(kv.me, "KVServer Leader startCommand args:%+v", args)
+	DPrintf(kv.me, "KVServer<-[%d:%d] Leader startCommand args:%s", args.ClientId, args.SequenceNum, args)
 
 	kv.mu.Lock()
 	kv.buildNotifyCh(index)
@@ -82,12 +86,12 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 	case res := <-ch:
 		reply.Status = res.Status
 		reply.Response = res.Response
+		DPrintf(kv.me, "KVServer->[%d:%d] reply:%s", args.ClientId, args.SequenceNum, reply)
 	case <-time.After(ExecuteTimeout):
 		reply.Status = ErrTimeout
 		reply.LeaderHint = kv.rf.GetLeader()
+		DPrintf(kv.me, "KVServer->[%d:%d] timeout", args.ClientId, args.SequenceNum)
 	}
-
-	//DPrintf(kv.me, "KVServer Leader gotReply:%v", reply)
 
 	go kv.releaseNotifyCh(index)
 }
@@ -97,11 +101,13 @@ func (kv *KVServer) applier() {
 		select {
 		case msg := <-kv.applyCh:
 			kv.mu.Lock()
-			//DPrintf(kv.me, "KVServer gotApplyMsg:%+v", msg)
+			if _, isLeader := kv.rf.GetState(); isLeader {
+				DPrintf(kv.me, "KVServerApplier gotApplyMsg:%v", msg)
+			}
 			switch {
 			case msg.CommandValid:
 				if msg.CommandIndex <= kv.lastApplied {
-					DPrintf(kv.me, "KVServer discard outdated message")
+					DPrintf(kv.me, "KVServerApplier discardOutdatedMsgIndex:%d lastApplied:%d", msg.CommandIndex, kv.lastApplied)
 					kv.mu.Unlock()
 					continue
 				}
@@ -117,12 +123,20 @@ func (kv *KVServer) applier() {
 					kv.setSession(op.ClientId, op.SequenceNum, reply)
 				}
 
-				if currentTerm, isLeader := kv.rf.GetState(); isLeader && msg.CommandTerm == currentTerm {
-					kv.notifyCh[msg.CommandIndex] <- reply
+				if currentTerm, isLeader := kv.rf.GetState(); isLeader {
+					if msg.CommandTerm == currentTerm {
+						if ch, ok := kv.notifyCh[msg.CommandIndex]; ok {
+							ch <- reply
+						} else {
+							DPrintf(kv.me, "KVServerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
+						}
+					} else {
+						DPrintf(kv.me, "KVServerApplier lostLeadership")
+					}
 				}
 			case msg.SnapshotValid:
 			default:
-				panic(fmt.Sprintf("Unexpected message %v", msg))
+				panic(fmt.Sprintf("KVServerApplier Unexpected message %v", msg))
 			}
 			kv.mu.Unlock()
 		}

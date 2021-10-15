@@ -1,5 +1,7 @@
 package kvraft
 
+import "fmt"
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
@@ -37,6 +39,10 @@ type CommandArgs struct {
 	SequenceNum int64
 }
 
+func (ca CommandArgs) String() string {
+	return fmt.Sprintf("[%d:%d] %s<%s,%s>", ca.ClientId, ca.SequenceNum, ca.OpType, ca.Key, ca.Value)
+}
+
 func (ca CommandArgs) clone() *CommandArgs {
 	return &CommandArgs{
 		OpType:      ca.OpType,
@@ -51,6 +57,14 @@ type CommandReply struct {
 	Status     string
 	Response   string
 	LeaderHint int
+}
+
+func (cr *CommandReply) String() string {
+	if len(cr.Response) > 5 {
+		return fmt.Sprintf("%s ...%s", cr.Status, cr.Response[len(cr.Response)-5:])
+	} else {
+		return fmt.Sprintf("%s %s", cr.Status, cr.Response)
+	}
 }
 
 func (cr CommandReply) clone() *CommandReply {

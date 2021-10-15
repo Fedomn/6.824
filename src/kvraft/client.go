@@ -65,13 +65,16 @@ func (ck *Clerk) Append(key string, value string) {
 // 从而导致leaderHint并不是ck.servers里的index
 func (ck *Clerk) Command(args *CommandArgs) string {
 	for {
+		// CDPrintf(ck.clientId, "KVClient startArgs:%s", args)
 		reply := &CommandReply{}
 		ok := ck.servers[ck.leaderId].Call("KVServer.Command", args.clone(), reply)
 		if !ok || reply.Status == ErrWrongLeader || reply.Status == ErrTimeout {
 			ck.leaderId = (ck.leaderId + 1) % int64(len(ck.servers))
+			if ok {
+				CDPrintf(ck.clientId, "KVClient gotErrReply:%s", reply.Status)
+			}
 			continue
 		}
-		CDPrintf(ck.clientId, "KVClient gotReply")
 		ck.sequenceNum++
 		return reply.Response
 	}

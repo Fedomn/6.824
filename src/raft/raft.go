@@ -2,6 +2,7 @@ package raft
 
 import (
 	"6.824/labrpc"
+	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -17,6 +18,16 @@ type ApplyMsg struct {
 	Snapshot      []byte
 	SnapshotTerm  int
 	SnapshotIndex int
+}
+
+func (a ApplyMsg) String() string {
+	if a.CommandValid {
+		return fmt.Sprintf("Command:{<%d,%d> %s}", a.CommandTerm, a.CommandIndex, a.Command)
+	} else if a.SnapshotValid {
+		return fmt.Sprintf("Snapshot:{<%d,%d> %s}", a.SnapshotTerm, a.SnapshotIndex, string(a.Snapshot))
+	} else {
+		return "InvalidApplyMsg"
+	}
 }
 
 type Raft struct {
