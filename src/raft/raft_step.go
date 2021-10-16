@@ -116,7 +116,16 @@ func (rf *Raft) Step(e Event) error {
 					passCheck = false
 					// 注意，conflict index应该为最后的index + 1，因为在下一次RPC需要计算PrevLogIndex=nextIndex-1
 					reply.ConflictIndex = lastLogIndex + 1
-					DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for index. %v < %v, conflictIndex:%v", rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex, reply.ConflictIndex)
+					DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for lastLogIndex. %v < %v, conflictIndex:%v", rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex, reply.ConflictIndex)
+					break
+				}
+
+				// 已经snapshot后，prevLogIndex在snapshot之前
+				firstLogIndex := rf.getFirstLogIndex()
+				if args.PrevLogIndex < firstLogIndex {
+					passCheck = false
+					reply.ConflictIndex = firstLogIndex + 1
+					DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for firstLogIndex. %v > %v, conflictIndex:%v", rf.me, args.LeaderId, firstLogIndex, args.PrevLogIndex, reply.ConflictIndex)
 					break
 				}
 
