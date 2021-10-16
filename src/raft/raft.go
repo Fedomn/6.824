@@ -174,8 +174,8 @@ func (rf *Raft) asyncApplier() {
 		}
 		commitIndex := rf.commitIndex
 		deltaCount := commitIndex - rf.lastApplied
-		DPrintf(rf.me, "%s will apply %v - %v = delta %v", rf.state, commitIndex, rf.lastApplied, deltaCount)
 		needAppliedEntries := rf.getEntries(rf.lastApplied+1, commitIndex)
+		DPrintf(rf.me, "%s will apply %v - %v = delta %v, entries:%v", rf.state, commitIndex, rf.lastApplied, deltaCount, debugLast3Logs(needAppliedEntries))
 		rf.mu.Unlock()
 		for _, entry := range needAppliedEntries {
 			rf.applyCh <- ApplyMsg{

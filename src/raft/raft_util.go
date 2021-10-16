@@ -60,7 +60,7 @@ func (rf *Raft) getFirstLogTerm() int {
 }
 
 func (rf *Raft) getEntries(startIdx, endIdx int) []LogEntry {
-	// [startIdx, endIdx)
+	// [startIdx, endIdx]
 	orig := rf.log[rf.getLogEntryIndex(startIdx) : rf.getLogEntryIndex(endIdx)+1]
 	x := make([]LogEntry, len(orig))
 	copy(x, orig)
