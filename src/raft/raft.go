@@ -24,7 +24,7 @@ func (a ApplyMsg) String() string {
 	if a.CommandValid {
 		return fmt.Sprintf("Command:{<%d,%d> %s}", a.CommandTerm, a.CommandIndex, a.Command)
 	} else if a.SnapshotValid {
-		return fmt.Sprintf("Snapshot:{<%d,%d> %s}", a.SnapshotTerm, a.SnapshotIndex, string(a.Snapshot))
+		return fmt.Sprintf("Snapshot:{<%d,%d>}", a.SnapshotTerm, a.SnapshotIndex)
 	} else {
 		return "InvalidApplyMsg"
 	}
@@ -186,7 +186,10 @@ func (rf *Raft) asyncApplier() {
 			}
 		}
 		rf.mu.Lock()
-		rf.lastApplied += deltaCount
+		// 这里会snapshot设置lastApplied出现并发问题，如
+		// snapshot idx=800在前，apply idx=797在后，因此以最新的rf.lastApplied再重新设置。
+		// snapshot idx=700在前，apply idx=701在后，这是正常流程用当前apply的commitIndex来设置。
+		rf.lastApplied = max(rf.lastApplied, commitIndex)
 		rf.mu.Unlock()
 	}
 }

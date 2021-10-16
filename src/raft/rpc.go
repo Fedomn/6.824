@@ -135,6 +135,11 @@ type InstallSnapshotArgs struct {
 	Data              []byte
 }
 
+func (i InstallSnapshotArgs) String() string {
+	return fmt.Sprintf("{Seq:%v Term:%v LeaderId:%v LastIncludedIndex:%v LastIncludedTerm:%v}",
+		i.Seq, i.Term, i.LeaderId, i.LastIncludedIndex, i.LastIncludedTerm)
+}
+
 type InstallSnapshotReply struct {
 	Term    int  // replied server's term
 	Success bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
