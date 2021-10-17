@@ -1,7 +1,7 @@
 default: run
 
 COUNT = 200
-TEST_NAME = "TestOnePartition3A"
+TEST_NAME = "3A|3B"
 
 run: clean
 	go test -run ${TEST_NAME} -race -failfast > testrun.log

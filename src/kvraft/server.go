@@ -4,7 +4,9 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"bytes"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,11 +32,12 @@ type LastOperation struct {
 }
 
 type KVServer struct {
-	mu      sync.RWMutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
-	dead    int32 // set by Kill()
+	mu          sync.RWMutex
+	me          int
+	rf          *raft.Raft
+	rfPersister *raft.Persister
+	applyCh     chan raft.ApplyMsg
+	dead        int32 // set by Kill()
 
 	maxraftstate int // snapshot if log grows this big
 
@@ -101,9 +104,7 @@ func (kv *KVServer) applier() {
 		select {
 		case msg := <-kv.applyCh:
 			kv.mu.Lock()
-			if _, isLeader := kv.rf.GetState(); isLeader {
-				DPrintf(kv.me, "KVServerApplier gotApplyMsg:%v", msg)
-			}
+			DPrintf(kv.me, "KVServerApplier gotApplyMsg:%v", msg)
 			switch {
 			case msg.CommandValid:
 				if msg.CommandIndex <= kv.lastApplied {
@@ -116,15 +117,26 @@ func (kv *KVServer) applier() {
 				op := msg.Command.(Op)
 				reply := CommandReply{}
 
+				if kv.isOutdatedCommand(op.ClientId, op.SequenceNum) {
+					DPrintf(kv.me, "KVServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+					reply.Status = ErrOutdated
+					kv.mu.RUnlock()
+					return
+				}
+
 				if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {
+					DPrintf(kv.me, "KVServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 					reply = lastReply
 				} else {
 					reply = kv.applyToStore(op)
+					if op.OpType == OpPut {
+						DPrintf(kv.me, "KVServerApplier OpPut:%s, KVStore:%v", op, kv.kvStore)
+					}
 					kv.setSession(op.ClientId, op.SequenceNum, reply)
 				}
 
 				if currentTerm, isLeader := kv.rf.GetState(); isLeader {
-					if msg.CommandTerm == currentTerm {
+					if msg.CommandTerm <= currentTerm {
 						if ch, ok := kv.notifyCh[msg.CommandIndex]; ok {
 							ch <- reply
 						} else {
@@ -134,13 +146,54 @@ func (kv *KVServer) applier() {
 						DPrintf(kv.me, "KVServerApplier lostLeadership")
 					}
 				}
+
+				if kv.maxraftstate != -1 && kv.rfPersister.RaftStateSize() > kv.maxraftstate {
+					beforeSize := kv.rfPersister.RaftStateSize()
+					DPrintf(kv.me, "KVServerApplier %d > %d willSnapshot kvStore:%v", beforeSize, kv.maxraftstate, kv.kvStore)
+					kv.rf.Snapshot(msg.CommandIndex, kv.makeSnapshot())
+					DPrintf(kv.me, "KVServerApplier afterSnapshotKvSize:%d, %v", kv.rfPersister.RaftStateSize(), len(kv.kvStore))
+				}
 			case msg.SnapshotValid:
+				if kv.rf.CondInstallSnapshot(msg.SnapshotTerm, msg.SnapshotIndex, msg.Snapshot) {
+					kv.installSnapshot(msg.Snapshot)
+					DPrintf(kv.me, "KVServerApplier willInstallSnapshot:%v", kv.kvStore)
+					kv.lastApplied = msg.SnapshotIndex
+				}
 			default:
 				panic(fmt.Sprintf("KVServerApplier Unexpected message %v", msg))
 			}
 			kv.mu.Unlock()
 		}
 	}
+}
+
+func (kv *KVServer) makeSnapshot() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	_ = e.Encode(kv.lastApplied)
+	_ = e.Encode(kv.kvStore)
+	_ = e.Encode(kv.sessions)
+	return w.Bytes()
+}
+
+func (kv *KVServer) installSnapshot(snapshot []byte) {
+	if snapshot == nil || len(snapshot) == 0 {
+		kv.lastApplied = 0
+		kv.kvStore = make(map[string]string)
+		kv.sessions = make(map[int64]LastOperation)
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var lastApplied int
+	var kvStore map[string]string
+	var sessions map[int64]LastOperation
+	if d.Decode(&lastApplied) != nil || d.Decode(&kvStore) != nil || d.Decode(&sessions) != nil {
+		log.Fatalf("KVServerApplier decode:%v error", snapshot)
+	}
+	kv.lastApplied = lastApplied
+	kv.kvStore = kvStore
+	kv.sessions = sessions
 }
 
 func (kv *KVServer) isOutdatedCommand(clientId, sequenceNum int64) bool {
@@ -230,14 +283,15 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.StartNode(servers, me, persister, kv.applyCh)
+	kv.rfPersister = persister
 
 	// You may need initialization code here.
-	kv.lastApplied = 0
-	kv.kvStore = make(map[string]string)
-	kv.sessions = make(map[int64]LastOperation)
+	kv.installSnapshot(kv.rfPersister.ReadSnapshot())
 	kv.notifyCh = make(map[int]chan CommandReply)
 
 	go kv.applier()
+
+	DPrintf(kv.me, "KVServer init success kvStoreSize:%v", kv.kvStore)
 
 	return kv
 }

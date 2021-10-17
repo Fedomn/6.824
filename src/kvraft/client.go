@@ -68,7 +68,7 @@ func (ck *Clerk) Command(args *CommandArgs) string {
 		// CDPrintf(ck.clientId, "KVClient startArgs:%s", args)
 		reply := &CommandReply{}
 		ok := ck.servers[ck.leaderId].Call("KVServer.Command", args.clone(), reply)
-		if !ok || reply.Status == ErrWrongLeader || reply.Status == ErrTimeout {
+		if !ok || reply.Status != OK {
 			ck.leaderId = (ck.leaderId + 1) % int64(len(ck.servers))
 			if ok {
 				CDPrintf(ck.clientId, "KVClient gotErrReply:%s", reply.Status)

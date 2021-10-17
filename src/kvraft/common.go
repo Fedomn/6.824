@@ -4,7 +4,6 @@ import "fmt"
 
 const (
 	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeout     = "ErrTimeout"
 	ErrOutdated    = "ErrOutdated"

@@ -36,3 +36,8 @@ Hit：
 - 可以不用优化read-only operation在Section 8中
 
 
+#### Part B
+
+kvserver支持snapshot。通过比较 maxraftstate 和 persister.RaftStateSize()，来判断kvserver是否该调用raft.Snapshot
+
+同时kvserver需要在restart时候，读取raft的snapshot来恢复自己的store
