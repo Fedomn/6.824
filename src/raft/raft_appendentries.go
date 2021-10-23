@@ -32,6 +32,10 @@ func (rf *Raft) startAppendEntries(isHeartbeat bool) {
 						TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v RPC not reply", rf.me, peerIdx)
 					}
 				} else {
+					if reply.Abort {
+						TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v abortReply", rf.me, peerIdx)
+						return
+					}
 					duration := time.Now().Sub(now)
 					rf.send(Event{Type: EventSnapResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 					TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v consume time:%s", rf.me, peerIdx, duration)
@@ -70,6 +74,10 @@ func (rf *Raft) startAppendEntries(isHeartbeat bool) {
 						TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
 					}
 				} else {
+					if reply.Abort {
+						TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v abortReply", rf.me, peerIdx)
+						return
+					}
 					duration := time.Now().Sub(now)
 					rf.send(Event{Type: EventAppResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 					TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v consume time:%s", rf.me, peerIdx, duration)

@@ -22,6 +22,10 @@ func (rf *Raft) startRequestVote() {
 					TRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
 				}
 			} else {
+				if reply.Abort {
+					TRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v abortReply", rf.me, peerIdx)
+					return
+				}
 				rf.send(Event{Type: EventVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 			}
 		}()
@@ -52,6 +56,10 @@ func (rf *Raft) startPreRequestVote() {
 					TRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v RPC not reply", rf.me, peerIdx)
 				}
 			} else {
+				if reply.Abort {
+					TRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v abortReply", rf.me, peerIdx)
+					return
+				}
 				rf.send(Event{Type: EventPreVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
 			}
 		}()

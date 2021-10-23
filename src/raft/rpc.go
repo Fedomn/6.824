@@ -88,6 +88,7 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	Term        int  // replied server's term
 	VoteGranted bool // true means replied server agree
+	Abort       bool
 }
 
 type LogEntry struct {
@@ -124,6 +125,7 @@ type AppendEntriesReply struct {
 	Success       bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
 	ConflictIndex int
 	NextIndex     int
+	Abort         bool
 }
 
 type InstallSnapshotArgs struct {
@@ -143,6 +145,7 @@ func (i InstallSnapshotArgs) String() string {
 type InstallSnapshotReply struct {
 	Term    int  // replied server's term
 	Success bool // ture means follower match consistency check use PrevLogIndex and PrevLogTerm
+	Abort   bool
 }
 
 // None is a placeholder node ID used when there is no leader.

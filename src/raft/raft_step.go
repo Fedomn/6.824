@@ -21,6 +21,7 @@ func (rf *Raft) Step(e Event) error {
 		reply := e.Reply.(*RequestVoteReply)
 		if args.Seq <= rf.recvRpcLatestSeq[e.From] {
 			DRpcPrintf(rf.me, args.Seq, "%s %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", e.Type, rf.me, args.CandidateId, args.Seq, rf.recvRpcLatestSeq[e.From])
+			reply.Abort = true
 			return nil
 		}
 		rf.setRecvRpcLatestSeq(e.From, args.Seq)
@@ -91,6 +92,7 @@ func (rf *Raft) Step(e Event) error {
 		reply := e.Reply.(*AppendEntriesReply)
 		if args.Seq <= rf.recvRpcLatestSeq[e.From] {
 			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", rf.me, args.LeaderId, args.Seq, rf.recvRpcLatestSeq[e.From])
+			reply.Abort = true
 			return nil
 		}
 		rf.setRecvRpcLatestSeq(e.From, args.Seq)
@@ -184,6 +186,7 @@ func (rf *Raft) Step(e Event) error {
 		DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v receiveEventSnap args:%v", rf.me, args.LeaderId, args)
 		if args.Seq <= rf.recvRpcLatestSeq[e.From] {
 			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", rf.me, args.LeaderId, args.Seq, rf.recvRpcLatestSeq[e.From])
+			reply.Abort = true
 			return nil
 		}
 		rf.setRecvRpcLatestSeq(e.From, args.Seq)
@@ -241,6 +244,7 @@ func stepPreCandidate(rf *Raft, e Event) error {
 		reply := e.Reply.(*RequestVoteReply)
 		if args.Seq != rf.sendRpcLatestSeq[e.From].SendSeq {
 			DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
+			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
@@ -279,6 +283,7 @@ func stepCandidate(rf *Raft, e Event) error {
 		reply := e.Reply.(*RequestVoteReply)
 		if args.Seq != rf.sendRpcLatestSeq[e.From].SendSeq {
 			DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
+			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
@@ -326,6 +331,7 @@ func stepLeader(rf *Raft, e Event) error {
 		reply := e.Reply.(*AppendEntriesReply)
 		if args.Seq <= rf.sendRpcLatestSeq[e.From].RecvSeq {
 			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].RecvSeq)
+			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
@@ -366,6 +372,7 @@ func stepLeader(rf *Raft, e Event) error {
 		reply := e.Reply.(*InstallSnapshotReply)
 		if args.Seq != rf.sendRpcLatestSeq[e.From].SendSeq {
 			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
+			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
