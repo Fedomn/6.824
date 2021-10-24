@@ -1,80 +1,186 @@
 package shardctrler
 
+import (
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
+	"fmt"
+	"sync"
+	"time"
+)
 
-import "6.824/raft"
-import "6.824/labrpc"
-import "sync"
-import "6.824/labgob"
+const ExecuteTimeout = time.Second
 
+type Op struct {
+	OpType      OpType
+	Args        CommandArgs
+	ClientId    int64
+	SequenceNum int64
+}
+
+func (o Op) String() string {
+	return fmt.Sprintf("[%d:%d] %s<%s>", o.ClientId, o.SequenceNum, o.OpType, o.Args)
+}
 
 type ShardCtrler struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
+	dead    int32
 
-	// Your data here.
+	rfPersister *raft.Persister
 
-	configs []Config // indexed by config num
+	configStore *MemoryConfigStore
+
+	lastApplied int
+	kvStore     map[string]string
+	sessions    map[int64]LastOperation
+	notifyCh    map[int]chan CommandReply
 }
 
-
-type Op struct {
-	// Your data here.
+type LastOperation struct {
+	SequenceNum int64
+	Reply       CommandReply
 }
 
+func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
+	sc.mu.RLock()
+	if sc.isOutdatedCommand(args.ClientId, args.SequenceNum) {
+		DPrintf(sc.me, "ShardCtrler<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
+		reply.Status = ErrOutdated
+		sc.mu.RUnlock()
+		return
+	}
+	if isDuplicated, lastReply := sc.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
+		reply.Status = lastReply.Status
+		reply.Config = lastReply.Config
+		DPrintf(sc.me, "ShardCtrler<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
+		sc.mu.RUnlock()
+		return
+	}
+	sc.mu.RUnlock()
 
-func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
-	// Your code here.
+	index, term, isLeader := sc.rf.Start(Op{
+		OpType:      args.OpType,
+		Args:        *args.clone(),
+		ClientId:    args.ClientId,
+		SequenceNum: args.SequenceNum,
+	})
+	if !isLeader {
+		//DPrintf(sc.me, "ShardCtrler reply ErrWrongLeader")
+		reply.Status = ErrWrongLeader
+		return
+	}
+
+	DPrintf(sc.me, "ShardCtrler<-[%d:%d] Leader startCommand <%d,%d> args:%s", args.ClientId, args.SequenceNum, term, index, args)
+
+	sc.mu.Lock()
+	sc.buildNotifyCh(index)
+	ch := sc.notifyCh[index]
+	sc.mu.Unlock()
+
+	select {
+	case res := <-ch:
+		reply.Status = res.Status
+		reply.Config = res.Config
+		DPrintf(sc.me, "ShardCtrler->[%d:%d] reply:%s", args.ClientId, args.SequenceNum, reply)
+	case <-time.After(ExecuteTimeout):
+		reply.Status = ErrTimeout
+		DPrintf(sc.me, "ShardCtrler->[%d:%d] timeout", args.ClientId, args.SequenceNum)
+	}
+
+	go sc.releaseNotifyCh(index)
 }
 
-func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
-	// Your code here.
+func (sc *ShardCtrler) applier() {
+	for !sc.killed() {
+		select {
+		case msg := <-sc.applyCh:
+			sc.mu.Lock()
+			DPrintf(sc.me, "ShardCtrlerApplier gotApplyMsg:%v", msg)
+			switch {
+			case msg.CommandValid:
+				if msg.CommandIndex <= sc.lastApplied {
+					DPrintf(sc.me, "ShardCtrlerApplier discardOutdatedMsgIndex:%d lastApplied:%d", msg.CommandIndex, sc.lastApplied)
+					sc.mu.Unlock()
+					continue
+				}
+				sc.lastApplied = msg.CommandIndex
+
+				op := msg.Command.(Op)
+				reply := CommandReply{}
+
+				if sc.isOutdatedCommand(op.ClientId, op.SequenceNum) {
+					DPrintf(sc.me, "ShardCtrlerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+					reply.Status = ErrOutdated
+					sc.mu.RUnlock()
+					return
+				}
+
+				if isDuplicated, lastReply := sc.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {
+					DPrintf(sc.me, "ShardCtrlerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+					reply = lastReply
+				} else {
+					reply = sc.applyToStore(op)
+					sc.setSession(op.ClientId, op.SequenceNum, reply)
+				}
+
+				if currentTerm, isLeader := sc.rf.GetState(); isLeader {
+					if msg.CommandTerm <= currentTerm {
+						if ch, ok := sc.notifyCh[msg.CommandIndex]; ok {
+							ch <- reply
+						} else {
+							DPrintf(sc.me, "ShardCtrlerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
+						}
+					} else {
+						DPrintf(sc.me, "ShardCtrlerApplier lostLeadership")
+					}
+				}
+			default:
+				panic(fmt.Sprintf("ShardCtrlerApplier Unexpected message %v", msg))
+			}
+			sc.mu.Unlock()
+		}
+	}
 }
 
-func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
-	// Your code here.
+func (sc *ShardCtrler) applyToStore(op Op) CommandReply {
+	switch op.OpType {
+	case OpJoin:
+		sc.configStore.Join(op.Args.Servers)
+		return CommandReply{Status: OK}
+	case OpLeave:
+		sc.configStore.Leave(op.Args.GIDs)
+		return CommandReply{Status: OK}
+	case OpMove:
+		sc.configStore.Move(op.Args.Shard, op.Args.GID)
+		return CommandReply{Status: OK}
+	case OpQuery:
+		config, status := sc.configStore.Query(op.Args.Num)
+		return CommandReply{status, config}
+	default:
+		panic(fmt.Sprintf("invalid OpType: %v", op))
+	}
 }
 
-func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	// Your code here.
-}
-
-
-//
-// the tester calls Kill() when a ShardCtrler instance won't
-// be needed again. you are not required to do anything
-// in Kill(), but it might be convenient to (for example)
-// turn off debug output from this instance.
-//
-func (sc *ShardCtrler) Kill() {
-	sc.rf.Kill()
-	// Your code here, if desired.
-}
-
-// needed by shardkv tester
-func (sc *ShardCtrler) Raft() *raft.Raft {
-	return sc.rf
-}
-
-//
-// servers[] contains the ports of the set of
-// servers that will cooperate via Raft to
-// form the fault-tolerant shardctrler service.
-// me is the index of the current server in servers[].
-//
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
 	sc := new(ShardCtrler)
 	sc.me = me
-
-	sc.configs = make([]Config, 1)
-	sc.configs[0].Groups = map[int][]string{}
-
 	labgob.Register(Op{})
-	sc.applyCh = make(chan raft.ApplyMsg)
-	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
-	// Your code here.
+	sc.applyCh = make(chan raft.ApplyMsg)
+	sc.rf = raft.StartNode(servers, me, persister, sc.applyCh)
+	sc.rfPersister = persister
+
+	sc.lastApplied = 0
+	sc.configStore = NewMemoryConfigStore()
+	sc.sessions = make(map[int64]LastOperation)
+	sc.notifyCh = make(map[int]chan CommandReply)
+
+	go sc.applier()
+
+	DPrintf(sc.me, "ShardCtrler init success")
 
 	return sc
 }

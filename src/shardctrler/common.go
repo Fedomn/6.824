@@ -1,73 +1,90 @@
 package shardctrler
 
-//
-// Shard controler: assigns shards to replication groups.
-//
-// RPC interface:
-// Join(servers) -- add a set of groups (gid -> server-list mapping).
-// Leave(gids) -- delete a set of groups.
-// Move(shard, gid) -- hand off one shard from current owner to gid.
-// Query(num) -> fetch Config # num, or latest config if num==-1.
-//
-// A Config (configuration) describes a set of replica groups, and the
-// replica group responsible for each shard. Configs are numbered. Config
-// #0 is the initial configuration, with no groups and all shards
-// assigned to group 0 (the invalid group).
-//
-// You will need to add fields to the RPC argument structs.
-//
-
-// The number of shards.
-const NShards = 10
-
-// A configuration -- an assignment of shards to groups.
-// Please don't change this.
-type Config struct {
-	Num    int              // config number
-	Shards [NShards]int     // shard -> gid
-	Groups map[int][]string // gid -> servers[]
-}
+import "fmt"
 
 const (
-	OK = "OK"
+	OK             = "OK"
+	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
+	ErrOutdated    = "ErrOutdated"
 )
 
-type Err string
+type CommandArgs struct {
+	OpType      OpType
+	ClientId    int64
+	SequenceNum int64
 
-type JoinArgs struct {
+	// JoinArgs
 	Servers map[int][]string // new GID -> servers mappings
-}
 
-type JoinReply struct {
-	WrongLeader bool
-	Err         Err
-}
-
-type LeaveArgs struct {
+	// LeaveArgs
 	GIDs []int
-}
 
-type LeaveReply struct {
-	WrongLeader bool
-	Err         Err
-}
-
-type MoveArgs struct {
+	// MoveArgs
 	Shard int
 	GID   int
-}
 
-type MoveReply struct {
-	WrongLeader bool
-	Err         Err
-}
-
-type QueryArgs struct {
+	// QueryArgs
 	Num int // desired config number
 }
 
-type QueryReply struct {
-	WrongLeader bool
-	Err         Err
-	Config      Config
+func (ca CommandArgs) String() string {
+	switch ca.OpType {
+	case OpJoin:
+		return fmt.Sprintf("[%d:%d] %s<Servers:%v>", ca.ClientId, ca.SequenceNum, ca.OpType, ca.Servers)
+	case OpLeave:
+		return fmt.Sprintf("[%d:%d] %s<GIDs:%v>", ca.ClientId, ca.SequenceNum, ca.OpType, ca.GIDs)
+	case OpMove:
+		return fmt.Sprintf("[%d:%d] %s<Shard:%v GID:%v>", ca.ClientId, ca.SequenceNum, ca.OpType, ca.Shard, ca.GID)
+	case OpQuery:
+		return fmt.Sprintf("[%d:%d] %s<Num:%v>", ca.ClientId, ca.SequenceNum, ca.OpType, ca.Num)
+	}
+	panic(fmt.Sprintf("unexpected OpType %d", ca.OpType))
+}
+
+func (ca CommandArgs) clone() *CommandArgs {
+	return &CommandArgs{
+		OpType:      ca.OpType,
+		ClientId:    ca.ClientId,
+		SequenceNum: ca.SequenceNum,
+		Servers:     ca.Servers,
+		GIDs:        ca.GIDs,
+		Shard:       ca.Shard,
+		GID:         ca.GID,
+		Num:         ca.Num,
+	}
+}
+
+type CommandReply struct {
+	Status string
+
+	// QueryReply
+	Config Config
+}
+
+func (cr CommandReply) String() string {
+	return fmt.Sprintf("{Status:%s,Config:%s}", cr.Status, cr.Config)
+}
+
+type OpType int
+
+const (
+	OpJoin OpType = iota
+	OpLeave
+	OpMove
+	OpQuery
+)
+
+func (o OpType) String() string {
+	switch o {
+	case OpJoin:
+		return "OpJoin"
+	case OpLeave:
+		return "OpLeave"
+	case OpMove:
+		return "OpMove"
+	case OpQuery:
+		return "OpQuery"
+	}
+	panic(fmt.Sprintf("unexpected OpType %d", o))
 }
