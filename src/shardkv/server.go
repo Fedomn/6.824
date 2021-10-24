@@ -25,10 +25,13 @@ type ShardKV struct {
 	lastApplied int
 	shardStore  ShardStore
 	sessions    map[int64]LastOperation
-	notifyCh    map[int]chan CmdOpReply
+	notifyCh    map[int]chan CmdReply
+
+	lastConfig    shardctrler.Config
+	currentConfig shardctrler.Config
 }
 
-func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdOpReply) {
+func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdReply) {
 	kv.mu.RLock()
 	if kv.isOutdatedCommand(args.ClientId, args.SequenceNum) {
 		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
@@ -45,23 +48,22 @@ func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdOpReply) {
 	}
 	kv.mu.RUnlock()
 
-	index, term, isLeader := kv.rf.Start(Command{
-		CmdType: CmdOp,
-		CmdArgs: CmdOpArgs{
-			OpType:      args.OpType,
-			Key:         args.Key,
-			Value:       args.Value,
-			ClientId:    args.ClientId,
-			SequenceNum: args.SequenceNum,
-		},
-	})
+	kv.StartCmdAndWait(Command{CmdOp, *args}, reply)
+}
+
+func (kv *ShardKV) StartCmdAndWait(cmd Command, reply *CmdReply) {
+	index, term, isLeader := kv.rf.Start(cmd)
 	if !isLeader {
 		reply.Status = ErrWrongLeader
 		reply.LeaderHint = kv.rf.GetLeader()
 		return
 	}
-
-	DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] Leader startCommand <%d,%d> args:%s", args.ClientId, args.SequenceNum, term, index, args)
+	if cmd.CmdType == CmdOp {
+		args := cmd.CmdArgs.(CmdOpArgs)
+		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] Leader start%sCommand <%d,%d> args:%s", args.ClientId, args.SequenceNum, cmd.CmdType, term, index, args)
+	} else {
+		DPrintf(kv.gid, kv.me, "ShardKVServer Leader start%sCommand <%d,%d> args:%s", cmd.CmdType, term, index, cmd.CmdArgs)
+	}
 
 	kv.mu.Lock()
 	kv.buildNotifyCh(index)
@@ -72,11 +74,21 @@ func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdOpReply) {
 	case res := <-ch:
 		reply.Status = res.Status
 		reply.Response = res.Response
-		DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] reply:%s", args.ClientId, args.SequenceNum, reply)
+		if cmd.CmdType == CmdOp {
+			args := cmd.CmdArgs.(CmdOpArgs)
+			DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] reply%s:%s", args.ClientId, args.SequenceNum, cmd.CmdType, reply)
+		} else {
+			DPrintf(kv.gid, kv.me, "ShardKVServer reply%s:%s", cmd.CmdType, reply)
+		}
 	case <-time.After(ExecuteTimeout):
 		reply.Status = ErrTimeout
 		reply.LeaderHint = kv.rf.GetLeader()
-		DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] timeout", args.ClientId, args.SequenceNum)
+		if cmd.CmdType == CmdOp {
+			args := cmd.CmdArgs.(CmdOpArgs)
+			DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] timeout%s", args.ClientId, args.SequenceNum, cmd.CmdType)
+		} else {
+			DPrintf(kv.gid, kv.me, "ShardKVServer timeout%s", cmd.CmdType)
+		}
 	}
 
 	go kv.releaseNotifyCh(index)
@@ -100,7 +112,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		maxraftstate: maxraftstate,
 		dead:         0,
 		sc:           shardctrler.MakeClerk(ctrlers),
-		notifyCh:     make(map[int]chan CmdOpReply),
+		notifyCh:     make(map[int]chan CmdReply),
 	}
 	kv.installSnapshot(kv.rfPersister.ReadSnapshot())
 

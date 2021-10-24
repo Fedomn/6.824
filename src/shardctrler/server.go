@@ -164,6 +164,14 @@ func (sc *ShardCtrler) applyToStore(op Op) CommandReply {
 	}
 }
 
+func DefaultConfig() Config {
+	return Config{
+		Num:    0,
+		Shards: [NShards]int{},
+		Groups: make(map[int][]string),
+	}
+}
+
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
 	sc := new(ShardCtrler)
 	sc.me = me

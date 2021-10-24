@@ -21,7 +21,7 @@ const (
 
 type LastOperation struct {
 	SequenceNum int64
-	Reply       CmdOpReply
+	Reply       CmdReply
 }
 
 type CmdOpType int
@@ -101,13 +101,13 @@ func (ca CmdOpArgs) clone() *CmdOpArgs {
 	}
 }
 
-type CmdOpReply struct {
+type CmdReply struct {
 	Status     string
 	Response   string
 	LeaderHint int
 }
 
-func (cr *CmdOpReply) String() string {
+func (cr *CmdReply) String() string {
 	if len(cr.Response) > 5 {
 		return fmt.Sprintf("%s ...%s", cr.Status, cr.Response[len(cr.Response)-5:])
 	} else {
@@ -115,8 +115,8 @@ func (cr *CmdOpReply) String() string {
 	}
 }
 
-func (cr CmdOpReply) clone() *CmdOpReply {
-	return &CmdOpReply{
+func (cr CmdReply) clone() *CmdReply {
+	return &CmdReply{
 		Status:     cr.Status,
 		Response:   cr.Response,
 		LeaderHint: cr.LeaderHint,

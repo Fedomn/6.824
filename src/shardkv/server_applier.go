@@ -18,7 +18,7 @@ func (kv *ShardKV) applier() {
 				kv.lastApplied = msg.CommandIndex
 
 				cmd := msg.Command.(Command)
-				reply := CmdOpReply{}
+				reply := CmdReply{}
 
 				switch cmd.CmdType {
 				case CmdOp:
@@ -61,11 +61,11 @@ func (kv *ShardKV) applier() {
 	}
 }
 
-func (kv *ShardKV) applyOp(op CmdOpArgs) CmdOpReply {
+func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
 	if kv.isOutdatedCommand(op.ClientId, op.SequenceNum) {
 		DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 		kv.mu.RUnlock()
-		return CmdOpReply{Status: ErrOutdated}
+		return CmdReply{Status: ErrOutdated}
 	}
 
 	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {

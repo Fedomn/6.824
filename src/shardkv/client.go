@@ -104,7 +104,7 @@ func (ck *Clerk) Command(args *CmdOpArgs) string {
 		gid := ck.config.Shards[shard]
 		if servers, existGID := ck.config.Groups[gid]; existGID {
 			leaderId := ck.leaderIds[gid]
-			reply := &CmdOpReply{}
+			reply := &CmdReply{}
 			ok := ck.make_end(servers[leaderId]).Call("ShardKV.Command", args.clone(), reply)
 			switch {
 			case ok && reply.Status == OK:

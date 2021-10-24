@@ -57,16 +57,16 @@ func (shard *Shard) deepCopy() map[string]string {
 	return newShard
 }
 
-func (kv *ShardKV) applyToStore(op CmdOpArgs, shardId int) CmdOpReply {
+func (kv *ShardKV) applyToStore(op CmdOpArgs, shardId int) CmdReply {
 	switch op.OpType {
 	case CmdOpGet:
-		return CmdOpReply{Response: kv.shardStore[shardId].KV[op.Key], Status: OK}
+		return CmdReply{Response: kv.shardStore[shardId].KV[op.Key], Status: OK}
 	case CmdOpPut:
 		kv.shardStore[shardId].KV[op.Key] = op.Value
-		return CmdOpReply{Response: kv.shardStore[shardId].KV[op.Key], Status: OK}
+		return CmdReply{Response: kv.shardStore[shardId].KV[op.Key], Status: OK}
 	case CmdOpAppend:
 		kv.shardStore[shardId].KV[op.Key] += op.Value
-		return CmdOpReply{Response: kv.shardStore[shardId].KV[op.Key], Status: OK}
+		return CmdReply{Response: kv.shardStore[shardId].KV[op.Key], Status: OK}
 	default:
 		panic(fmt.Sprintf("invalid op: %v", op))
 	}
