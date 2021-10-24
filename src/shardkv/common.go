@@ -1,5 +1,7 @@
 package shardkv
 
+import "fmt"
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running Raft.
@@ -14,31 +16,71 @@ const (
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrOutdated    = "ErrOutdated"
+	ErrTimeout     = "ErrTimeout"
 )
 
-type Err string
+type OpType int
 
-// Put or Append
-type PutAppendArgs struct {
-	// You'll have to add definitions here.
-	Key   string
-	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+const (
+	OpGet OpType = iota
+	OpPut
+	OpAppend
+)
+
+func (o OpType) String() string {
+	switch o {
+	case OpGet:
+		return "OpGet"
+	case OpPut:
+		return "OpPut"
+	case OpAppend:
+		return "OpAppend"
+	default:
+		return "unknown"
+	}
 }
 
-type PutAppendReply struct {
-	Err Err
+type CommandArgs struct {
+	OpType      OpType
+	Key         string
+	Value       string
+	ClientId    int64
+	SequenceNum int64
 }
 
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
+func (ca CommandArgs) String() string {
+	return fmt.Sprintf("[%d:%d] %s<%s,%s>", ca.ClientId, ca.SequenceNum, ca.OpType, ca.Key, ca.Value)
 }
 
-type GetReply struct {
-	Err   Err
-	Value string
+func (ca CommandArgs) clone() *CommandArgs {
+	return &CommandArgs{
+		OpType:      ca.OpType,
+		Key:         ca.Key,
+		Value:       ca.Value,
+		ClientId:    ca.ClientId,
+		SequenceNum: ca.SequenceNum,
+	}
+}
+
+type CommandReply struct {
+	Status     string
+	Response   string
+	LeaderHint int
+}
+
+func (cr *CommandReply) String() string {
+	if len(cr.Response) > 5 {
+		return fmt.Sprintf("%s ...%s", cr.Status, cr.Response[len(cr.Response)-5:])
+	} else {
+		return fmt.Sprintf("%s %s", cr.Status, cr.Response)
+	}
+}
+
+func (cr CommandReply) clone() *CommandReply {
+	return &CommandReply{
+		Status:     cr.Status,
+		Response:   cr.Response,
+		LeaderHint: cr.LeaderHint,
+	}
 }

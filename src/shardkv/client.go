@@ -39,7 +39,10 @@ type Clerk struct {
 	sm       *shardctrler.Clerk
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
-	// You will have to modify this struct.
+
+	leaderIds   map[int]int64 // gid -> leaderId
+	clientId    int64
+	sequenceNum int64
 }
 
 //
@@ -52,86 +55,74 @@ type Clerk struct {
 // send RPCs.
 //
 func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *Clerk {
-	ck := new(Clerk)
-	ck.sm = shardctrler.MakeClerk(ctrlers)
-	ck.make_end = make_end
-	// You'll have to add code here.
+	ck := &Clerk{
+		sm:          shardctrler.MakeClerk(ctrlers),
+		make_end:    make_end,
+		leaderIds:   make(map[int]int64),
+		clientId:    nrand(),
+		sequenceNum: 0,
+	}
+	ck.config = ck.sm.Query(-1)
+	CDPrintf(ck.clientId, "ShardKVClient initCfg:%v", ck.config)
 	return ck
 }
 
-//
-// fetch the current value for a key.
-// returns "" if the key does not exist.
-// keeps trying forever in the face of all other errors.
-// You will have to modify this function.
-//
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
-	args.Key = key
-
-	for {
-		shard := key2shard(key)
-		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			// try each server for the shard.
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply GetReply
-				ok := srv.Call("ShardKV.Get", &args, &reply)
-				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
-					return reply.Value
-				}
-				if ok && (reply.Err == ErrWrongGroup) {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-		// ask controler for the latest configuration.
-		ck.config = ck.sm.Query(-1)
+	args := &CommandArgs{
+		OpType:      OpGet,
+		Key:         key,
+		ClientId:    ck.clientId,
+		SequenceNum: ck.sequenceNum,
 	}
-
-	return ""
-}
-
-//
-// shared by Put and Append.
-// You will have to modify this function.
-//
-func (ck *Clerk) PutAppend(key string, value string, op string) {
-	args := PutAppendArgs{}
-	args.Key = key
-	args.Value = value
-	args.Op = op
-
-
-	for {
-		shard := key2shard(key)
-		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply PutAppendReply
-				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
-				if ok && reply.Err == OK {
-					return
-				}
-				if ok && reply.Err == ErrWrongGroup {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-		// ask controler for the latest configuration.
-		ck.config = ck.sm.Query(-1)
-	}
+	return ck.Command(args)
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	args := &CommandArgs{
+		OpType:      OpPut,
+		Key:         key,
+		Value:       value,
+		ClientId:    ck.clientId,
+		SequenceNum: ck.sequenceNum,
+	}
+	ck.Command(args)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	args := &CommandArgs{
+		OpType:      OpAppend,
+		Key:         key,
+		Value:       value,
+		ClientId:    ck.clientId,
+		SequenceNum: ck.sequenceNum,
+	}
+	ck.Command(args)
+}
+
+func (ck *Clerk) Command(args *CommandArgs) string {
+	for {
+		shard := key2shard(args.Key)
+		gid := ck.config.Shards[shard]
+		if servers, existGID := ck.config.Groups[gid]; existGID {
+			leaderId := ck.leaderIds[gid]
+			reply := &CommandReply{}
+			ok := ck.make_end(servers[leaderId]).Call("ShardKV.Command", args.clone(), reply)
+			switch {
+			case ok && reply.Status == OK:
+				ck.sequenceNum++
+				return reply.Response
+			case ok && reply.Status == ErrWrongGroup:
+				goto refreshCfg
+			default:
+				if ok {
+					CDPrintf(ck.clientId, "ShardKVClient gotErrReply:%s", reply.Status)
+				}
+				ck.leaderIds[gid] = (ck.leaderIds[gid] + 1) % int64(len(servers))
+				continue
+			}
+		}
+	refreshCfg:
+		time.Sleep(100 * time.Millisecond)
+		ck.config = ck.sm.Query(-1)
+		CDPrintf(ck.clientId, "ShardKVClient refreshCfg:%v", ck.config)
+	}
 }

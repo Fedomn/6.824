@@ -1,52 +1,186 @@
 package shardkv
 
+import (
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
+	"6.824/shardctrler"
+	"fmt"
+	"sync"
+	"time"
+)
 
-import "6.824/labrpc"
-import "6.824/raft"
-import "sync"
-import "6.824/labgob"
-
-
+const ExecuteTimeout = time.Second
 
 type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	OpType      OpType
+	Key         string
+	Value       string
+	ClientId    int64
+	SequenceNum int64
+}
+
+func (o Op) String() string {
+	return fmt.Sprintf("[%d:%d] %s<%s,%s>", o.ClientId, o.SequenceNum, o.OpType, o.Key, o.Value)
+}
+
+type LastOperation struct {
+	SequenceNum int64
+	Reply       CommandReply
 }
 
 type ShardKV struct {
-	mu           sync.Mutex
+	mu           sync.RWMutex
 	me           int
 	rf           *raft.Raft
+	rfPersister  *raft.Persister
 	applyCh      chan raft.ApplyMsg
 	make_end     func(string) *labrpc.ClientEnd
 	gid          int
 	ctrlers      []*labrpc.ClientEnd
 	maxraftstate int // snapshot if log grows this big
+	dead         int32
+	sc           *shardctrler.Clerk
 
-	// Your definitions here.
+	lastApplied int
+	kvStore     map[string]string
+	sessions    map[int64]LastOperation
+	notifyCh    map[int]chan CommandReply
 }
 
+func (kv *ShardKV) Command(args *CommandArgs, reply *CommandReply) {
+	kv.mu.RLock()
+	if kv.isOutdatedCommand(args.ClientId, args.SequenceNum) {
+		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
+		reply.Status = ErrOutdated
+		kv.mu.RUnlock()
+		return
+	}
+	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
+		reply.Status = lastReply.Status
+		reply.Response = lastReply.Response
+		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
+		kv.mu.RUnlock()
+		return
+	}
+	kv.mu.RUnlock()
 
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+	index, term, isLeader := kv.rf.Start(Op{
+		OpType:      args.OpType,
+		Key:         args.Key,
+		Value:       args.Value,
+		ClientId:    args.ClientId,
+		SequenceNum: args.SequenceNum,
+	})
+	if !isLeader {
+		reply.Status = ErrWrongLeader
+		reply.LeaderHint = kv.rf.GetLeader()
+		return
+	}
+
+	DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] Leader startCommand <%d,%d> args:%s", args.ClientId, args.SequenceNum, term, index, args)
+
+	kv.mu.Lock()
+	kv.buildNotifyCh(index)
+	ch := kv.notifyCh[index]
+	kv.mu.Unlock()
+
+	select {
+	case res := <-ch:
+		reply.Status = res.Status
+		reply.Response = res.Response
+		DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] reply:%s", args.ClientId, args.SequenceNum, reply)
+	case <-time.After(ExecuteTimeout):
+		reply.Status = ErrTimeout
+		reply.LeaderHint = kv.rf.GetLeader()
+		DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] timeout", args.ClientId, args.SequenceNum)
+	}
+
+	go kv.releaseNotifyCh(index)
 }
 
-func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+func (kv *ShardKV) applier() {
+	for !kv.killed() {
+		select {
+		case msg := <-kv.applyCh:
+			kv.mu.Lock()
+			DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsg:%v", msg)
+			switch {
+			case msg.CommandValid:
+				if msg.CommandIndex <= kv.lastApplied {
+					DPrintf(kv.gid, kv.me, "ShardKVServerApplier discardOutdatedMsgIndex:%d lastApplied:%d", msg.CommandIndex, kv.lastApplied)
+					kv.mu.Unlock()
+					continue
+				}
+				kv.lastApplied = msg.CommandIndex
+
+				op := msg.Command.(Op)
+				reply := CommandReply{}
+
+				if kv.isOutdatedCommand(op.ClientId, op.SequenceNum) {
+					DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+					reply.Status = ErrOutdated
+					kv.mu.RUnlock()
+					return
+				}
+
+				if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {
+					DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+					reply = lastReply
+				} else {
+					reply = kv.applyToStore(op)
+					if op.OpType == OpPut {
+						DPrintf(kv.gid, kv.me, "ShardKVServerApplier OpPut:%s, KVStore:%v", op, kv.kvStore)
+					}
+					kv.setSession(op.ClientId, op.SequenceNum, reply)
+				}
+
+				if currentTerm, isLeader := kv.rf.GetState(); isLeader {
+					if msg.CommandTerm <= currentTerm {
+						if ch, ok := kv.notifyCh[msg.CommandIndex]; ok {
+							ch <- reply
+						} else {
+							DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
+						}
+					} else {
+						DPrintf(kv.gid, kv.me, "ShardKVServerApplier lostLeadership")
+					}
+				}
+
+				if kv.maxraftstate != -1 && kv.rfPersister.RaftStateSize() > kv.maxraftstate {
+					beforeSize := kv.rfPersister.RaftStateSize()
+					DPrintf(kv.gid, kv.me, "ShardKVServerApplier %d > %d willSnapshot kvStore:%v", beforeSize, kv.maxraftstate, kv.kvStore)
+					kv.rf.Snapshot(msg.CommandIndex, kv.makeSnapshot())
+					DPrintf(kv.gid, kv.me, "ShardKVServerApplier afterSnapshotKvSize:%d, %v", kv.rfPersister.RaftStateSize(), len(kv.kvStore))
+				}
+			case msg.SnapshotValid:
+				if kv.rf.CondInstallSnapshot(msg.SnapshotTerm, msg.SnapshotIndex, msg.Snapshot) {
+					kv.installSnapshot(msg.Snapshot)
+					DPrintf(kv.gid, kv.me, "ShardKVServerApplier willInstallSnapshot:%v", kv.kvStore)
+					kv.lastApplied = msg.SnapshotIndex
+				}
+			default:
+				panic(fmt.Sprintf("ShardKVServerApplier Unexpected message %v", msg))
+			}
+			kv.mu.Unlock()
+		}
+	}
 }
 
-//
-// the tester calls Kill() when a ShardKV instance won't
-// be needed again. you are not required to do anything
-// in Kill(), but it might be convenient to (for example)
-// turn off debug output from this instance.
-//
-func (kv *ShardKV) Kill() {
-	kv.rf.Kill()
-	// Your code here, if desired.
+func (kv *ShardKV) applyToStore(op Op) CommandReply {
+	switch op.OpType {
+	case OpGet:
+		return CommandReply{Response: kv.kvStore[op.Key], Status: OK}
+	case OpPut:
+		kv.kvStore[op.Key] = op.Value
+		return CommandReply{Response: kv.kvStore[op.Key], Status: OK}
+	case OpAppend:
+		kv.kvStore[op.Key] += op.Value
+		return CommandReply{Response: kv.kvStore[op.Key], Status: OK}
+	default:
+		panic(fmt.Sprintf("invalid op: %v", op))
+	}
 }
-
 
 //
 // servers[] contains the ports of the servers in this group.
@@ -90,12 +224,18 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	// Your initialization code here.
 
-	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	kv.sc = shardctrler.MakeClerk(kv.ctrlers)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.rf = raft.StartNode(servers, me, persister, kv.applyCh)
+	kv.rfPersister = persister
 
+	kv.installSnapshot(kv.rfPersister.ReadSnapshot())
+	kv.notifyCh = make(map[int]chan CommandReply)
+
+	go kv.applier()
+
+	DPrintf(kv.gid, kv.me, "ShardKVServer init success kvStoreSize:%v", kv.kvStore)
 
 	return kv
 }

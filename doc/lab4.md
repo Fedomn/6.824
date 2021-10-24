@@ -45,4 +45,12 @@ Config: 主要记录了两个 map
 - 当前每个 shard 被分配到了哪个 RaftGroup: shard -> gid
 - 当前每个 RaftGroup 对应的 真实servers: gid -> servers[]
 
+#### PartB
+
+实现shardkv，一个标准的 fault-tolerant kv storage system
+
+每个shardkv都是一个RaftGroup中一员，需要从shardctrler获取shard信息
+
+test才会call shardctrler的join方法
+
 
