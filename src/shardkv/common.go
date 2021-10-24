@@ -1,15 +1,14 @@
 package shardkv
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
-//
-// Sharded key/value server.
-// Lots of replica groups, each running Raft.
-// Shardctrler decides which group serves each shard.
-// Shardctrler may change shard assignment from time to time.
-//
-// You will have to modify these definitions.
-//
+const (
+	ExecuteTimeout       = 500 * time.Millisecond
+	MonitorConfigTimeout = 200 * time.Millisecond
+)
 
 const (
 	OK             = "OK"
@@ -20,41 +19,80 @@ const (
 	ErrTimeout     = "ErrTimeout"
 )
 
-type OpType int
+type LastOperation struct {
+	SequenceNum int64
+	Reply       CmdOpReply
+}
+
+type CmdOpType int
 
 const (
-	OpGet OpType = iota
-	OpPut
-	OpAppend
+	CmdOpGet CmdOpType = iota
+	CmdOpPut
+	CmdOpAppend
 )
 
-func (o OpType) String() string {
+func (o CmdOpType) String() string {
 	switch o {
-	case OpGet:
-		return "OpGet"
-	case OpPut:
-		return "OpPut"
-	case OpAppend:
-		return "OpAppend"
+	case CmdOpGet:
+		return "CmdOpGet"
+	case CmdOpPut:
+		return "CmdOpPut"
+	case CmdOpAppend:
+		return "CmdOpAppend"
 	default:
 		return "unknown"
 	}
 }
 
-type CommandArgs struct {
-	OpType      OpType
+type CmdType int
+
+const (
+	CmdOp CmdType = iota
+	CmdConfig
+	CmdInsertShards
+	CmdDeleteShards
+)
+
+func (cmd CmdType) String() string {
+	switch cmd {
+	case CmdOp:
+		return "Operation"
+	case CmdConfig:
+		return "Configuration"
+	case CmdInsertShards:
+		return "InsertShards"
+	case CmdDeleteShards:
+		return "DeleteShards"
+	default:
+		return "unknown"
+	}
+}
+
+type Command struct {
+	CmdType CmdType
+	CmdArgs interface{}
+}
+
+func (c Command) String() string {
+	return fmt.Sprintf("%s<%s>", c.CmdType, c.CmdArgs)
+}
+
+// operation
+type CmdOpArgs struct {
+	OpType      CmdOpType
 	Key         string
 	Value       string
 	ClientId    int64
 	SequenceNum int64
 }
 
-func (ca CommandArgs) String() string {
+func (ca CmdOpArgs) String() string {
 	return fmt.Sprintf("[%d:%d] %s<%s,%s>", ca.ClientId, ca.SequenceNum, ca.OpType, ca.Key, ca.Value)
 }
 
-func (ca CommandArgs) clone() *CommandArgs {
-	return &CommandArgs{
+func (ca CmdOpArgs) clone() *CmdOpArgs {
+	return &CmdOpArgs{
 		OpType:      ca.OpType,
 		Key:         ca.Key,
 		Value:       ca.Value,
@@ -63,13 +101,13 @@ func (ca CommandArgs) clone() *CommandArgs {
 	}
 }
 
-type CommandReply struct {
+type CmdOpReply struct {
 	Status     string
 	Response   string
 	LeaderHint int
 }
 
-func (cr *CommandReply) String() string {
+func (cr *CmdOpReply) String() string {
 	if len(cr.Response) > 5 {
 		return fmt.Sprintf("%s ...%s", cr.Status, cr.Response[len(cr.Response)-5:])
 	} else {
@@ -77,8 +115,8 @@ func (cr *CommandReply) String() string {
 	}
 }
 
-func (cr CommandReply) clone() *CommandReply {
-	return &CommandReply{
+func (cr CmdOpReply) clone() *CmdOpReply {
+	return &CmdOpReply{
 		Status:     cr.Status,
 		Response:   cr.Response,
 		LeaderHint: cr.LeaderHint,

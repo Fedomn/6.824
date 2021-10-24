@@ -68,8 +68,8 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 }
 
 func (ck *Clerk) Get(key string) string {
-	args := &CommandArgs{
-		OpType:      OpGet,
+	args := &CmdOpArgs{
+		OpType:      CmdOpGet,
 		Key:         key,
 		ClientId:    ck.clientId,
 		SequenceNum: ck.sequenceNum,
@@ -78,8 +78,8 @@ func (ck *Clerk) Get(key string) string {
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	args := &CommandArgs{
-		OpType:      OpPut,
+	args := &CmdOpArgs{
+		OpType:      CmdOpPut,
 		Key:         key,
 		Value:       value,
 		ClientId:    ck.clientId,
@@ -88,8 +88,8 @@ func (ck *Clerk) Put(key string, value string) {
 	ck.Command(args)
 }
 func (ck *Clerk) Append(key string, value string) {
-	args := &CommandArgs{
-		OpType:      OpAppend,
+	args := &CmdOpArgs{
+		OpType:      CmdOpAppend,
 		Key:         key,
 		Value:       value,
 		ClientId:    ck.clientId,
@@ -98,13 +98,13 @@ func (ck *Clerk) Append(key string, value string) {
 	ck.Command(args)
 }
 
-func (ck *Clerk) Command(args *CommandArgs) string {
+func (ck *Clerk) Command(args *CmdOpArgs) string {
 	for {
 		shard := key2shard(args.Key)
 		gid := ck.config.Shards[shard]
 		if servers, existGID := ck.config.Groups[gid]; existGID {
 			leaderId := ck.leaderIds[gid]
-			reply := &CommandReply{}
+			reply := &CmdOpReply{}
 			ok := ck.make_end(servers[leaderId]).Call("ShardKV.Command", args.clone(), reply)
 			switch {
 			case ok && reply.Status == OK:
