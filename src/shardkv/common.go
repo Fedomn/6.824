@@ -10,6 +10,7 @@ const (
 	MonitorConfigTimeout = 100 * time.Millisecond
 	MonitorPullTimeout   = 50 * time.Millisecond
 	MonitorGCTimeout     = 50 * time.Millisecond
+	MonitorNoopTimeout   = 200 * time.Millisecond
 )
 
 const (
@@ -55,6 +56,7 @@ const (
 	CmdConfig
 	CmdInsertShards
 	CmdDeleteShards
+	CmdNoop
 )
 
 func (cmd CmdType) String() string {
@@ -67,6 +69,8 @@ func (cmd CmdType) String() string {
 		return "InsertShards"
 	case CmdDeleteShards:
 		return "DeleteShards"
+	case CmdNoop:
+		return "CmdNoop"
 	default:
 		return "unknown"
 	}

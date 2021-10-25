@@ -14,7 +14,7 @@ func (kv *ShardKV) monitorConfiguration() {
 			for shardId, shard := range kv.shardStore {
 				if shard.Status != ShardServing {
 					canPullConfig = false
-					DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorConfiguration CanNotPullConfig, because shard%s status %s", shardId, shard.Status)
+					DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorConfiguration CanNotPullConfig, because shard%v status %s", shardId, shard.Status)
 					break
 				}
 			}
@@ -127,5 +127,17 @@ func (kv *ShardKV) deleteShardData(lastConfig shardctrler.Config, configNum, gid
 			kv.StartCmdAndWait(Command{CmdDeleteShards, pullArgs}, &CmdReply{})
 			return
 		}
+	}
+}
+
+func (kv *ShardKV) monitorNeedNoop() {
+	for !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			if !kv.rf.HasLogInCurrentTerm() {
+				DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorNoop StartNoop")
+				kv.StartCmdAndWait(Command{CmdNoop, ""}, &CmdReply{})
+			}
+		}
+		time.Sleep(MonitorNoopTimeout)
 	}
 }

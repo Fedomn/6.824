@@ -36,6 +36,8 @@ func (kv *ShardKV) applier() {
 				case CmdDeleteShards:
 					shardsOpArgs := cmd.CmdArgs.(ShardsOpArgs)
 					reply = kv.applyDeleteShards(shardsOpArgs)
+				case CmdNoop:
+					reply = kv.applyNoop()
 				}
 
 				if currentTerm, isLeader := kv.rf.GetState(); isLeader {
@@ -171,4 +173,9 @@ func (kv *ShardKV) applyDeleteShards(args ShardsOpArgs) CmdReply {
 	}
 	DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectOutdatedDeleteShards:%d", args.ConfigNum)
 	return CmdReply{Status: ErrOutdated}
+}
+
+// CmdNoop
+func (kv *ShardKV) applyNoop() CmdReply {
+	return CmdReply{Status: OK}
 }

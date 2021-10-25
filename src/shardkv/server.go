@@ -123,6 +123,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	go kv.monitorConfiguration()
 	go kv.monitorPull()
 	go kv.monitorGC()
+	go kv.monitorNeedNoop()
 
 	DPrintf(kv.gid, kv.me, "ShardKVServer init success shardStore:%v", kv.shardStore)
 

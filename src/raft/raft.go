@@ -90,6 +90,12 @@ type RpcSeqStatus struct {
 	RecvSeq uint32
 }
 
+func (rf *Raft) HasLogInCurrentTerm() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.getLastLogEntry().Term == rf.currentTerm
+}
+
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
