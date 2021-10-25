@@ -99,6 +99,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Command{})
 	labgob.Register(CmdOpArgs{})
+	labgob.Register(shardctrler.Config{})
+	labgob.Register(ShardsOpArgs{})
+	labgob.Register(ShardsOpReply{})
 
 	applyCh := make(chan raft.ApplyMsg)
 	kv := &ShardKV{
@@ -117,6 +120,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.installSnapshot(kv.rfPersister.ReadSnapshot())
 
 	go kv.applier()
+	go kv.monitorConfiguration()
+	go kv.monitorPull()
+	go kv.monitorGC()
 
 	DPrintf(kv.gid, kv.me, "ShardKVServer init success shardStore:%v", kv.shardStore)
 

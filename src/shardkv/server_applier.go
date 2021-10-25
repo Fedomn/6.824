@@ -1,6 +1,9 @@
 package shardkv
 
-import "fmt"
+import (
+	"6.824/shardctrler"
+	"fmt"
+)
 
 func (kv *ShardKV) applier() {
 	for !kv.killed() {
@@ -25,8 +28,14 @@ func (kv *ShardKV) applier() {
 					op := cmd.CmdArgs.(CmdOpArgs)
 					reply = kv.applyOp(op)
 				case CmdConfig:
+					latestConfig := cmd.CmdArgs.(shardctrler.Config)
+					reply = kv.applyConfig(latestConfig)
 				case CmdInsertShards:
+					shardsOpReply := cmd.CmdArgs.(ShardsOpReply)
+					reply = kv.applyInsertShards(shardsOpReply)
 				case CmdDeleteShards:
+					shardsOpArgs := cmd.CmdArgs.(ShardsOpArgs)
+					reply = kv.applyDeleteShards(shardsOpArgs)
 				}
 
 				if currentTerm, isLeader := kv.rf.GetState(); isLeader {
@@ -61,7 +70,14 @@ func (kv *ShardKV) applier() {
 	}
 }
 
+// CmdOp
 func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
+	shardId := key2shard(op.Key)
+	if !kv.canServe(shardId) {
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier canNotServe shardId:%d status:%s", shardId, kv.shardStore[shardId].Status)
+		return CmdReply{Status: ErrWrongGroup}
+	}
+
 	if kv.isOutdatedCommand(op.ClientId, op.SequenceNum) {
 		DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 		kv.mu.RUnlock()
@@ -72,7 +88,6 @@ func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
 		DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 		return lastReply
 	} else {
-		shardId := key2shard(op.Key)
 		reply := kv.applyToStore(op, shardId)
 		if op.OpType == CmdOpPut {
 			DPrintf(kv.gid, kv.me, "ShardKVServerApplier CmdOpPut:%s, KVStore:%v", op, kv.shardStore)
@@ -80,4 +95,80 @@ func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
 		kv.setSession(op.ClientId, op.SequenceNum, reply)
 		return reply
 	}
+}
+
+// CmdConfig
+func (kv *ShardKV) applyConfig(latestConfig shardctrler.Config) CmdReply {
+	if latestConfig.Num == kv.currentConfig.Num+1 {
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier updateLatestConfig to :%v", latestConfig)
+		kv.updateShardStatus(latestConfig)
+		kv.lastConfig = kv.currentConfig
+		kv.currentConfig = latestConfig
+		return CmdReply{Status: OK}
+	}
+	DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectLatestConfig, due to configNum:%v != %v", latestConfig.Num, kv.currentConfig.Num+1)
+	return CmdReply{Status: ErrOutdated}
+}
+
+func (kv *ShardKV) updateShardStatus(latestConfig shardctrler.Config) {
+	for i := 0; i < shardctrler.NShards; i++ {
+		// shard 当前不是我的group，但是，未来是我的group
+		if kv.currentConfig.Shards[i] != kv.gid && latestConfig.Shards[i] == kv.gid {
+			if gid := kv.currentConfig.Shards[i]; gid != 0 {
+				kv.shardStore[i].Status = ShardPulling
+			}
+		}
+		// shard 当前是我的group，但是，未来不是我的group
+		if kv.currentConfig.Shards[i] == kv.gid && latestConfig.Shards[i] != kv.gid {
+			if gid := latestConfig.Shards[i]; gid != 0 {
+				kv.shardStore[i].Status = ShardBePulling
+			}
+		}
+	}
+}
+
+// CmdInsertShards
+func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
+	if reply.ConfigNum == kv.currentConfig.Num {
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, before:%v", kv.shardStore)
+		for shardId, shardData := range reply.Shards {
+			shard := kv.shardStore[shardId]
+			// 自己的kv.monitorPull中发出command，标志 从其它gid的leader pull的reply返回了
+			if shard.Status == ShardPulling {
+				for key, value := range shardData {
+					shard.KV[key] = value
+				}
+				// 标志gc：leader已经拉取到了，告诉对方leader可以gc了
+				shard.Status = ShardGCing
+			}
+		}
+		for clientId, operation := range reply.LastOperations {
+			if _, ok := kv.sessions[clientId]; !ok {
+				kv.sessions[clientId] = operation
+			}
+		}
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, after:%v", kv.shardStore)
+		return CmdReply{Status: OK}
+	}
+	DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectOutdatedInsertShards:%d", reply.ConfigNum)
+	return CmdReply{Status: ErrOutdated}
+}
+
+// CmdDeleteShards
+func (kv *ShardKV) applyDeleteShards(args ShardsOpArgs) CmdReply {
+	if args.ConfigNum == kv.currentConfig.Num {
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, before:%v", kv.shardStore)
+		for _, shardId := range args.ShardIDs {
+			shard := kv.shardStore[shardId]
+			if shard.Status == ShardGCing { // 自己Pull完成的leader的 kv.monitorGC中发出command，标志 已经通知对方gid的leader gc了，因此需要在设置回Serving
+				shard.Status = ShardServing
+			} else if shard.Status == ShardBePulling { // updateShardStatus中设置的，标志这个shard 将来不属于当前leader，正在提供给其它gid-leader读取
+				kv.shardStore[shardId] = NewShard()
+			}
+		}
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, after:%v", kv.shardStore)
+		return CmdReply{Status: OK}
+	}
+	DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectOutdatedDeleteShards:%d", args.ConfigNum)
+	return CmdReply{Status: ErrOutdated}
 }

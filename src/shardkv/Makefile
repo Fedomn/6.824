@@ -1,13 +1,13 @@
 default: run
 
 COUNT = 200
-TEST_NAME = "TestStaticShards"
+TEST_NAME = "TestStaticShards|TestJoinLeave|TestSnapshot|TestMissChange|TestConcurrent1"
 
 run: clean
 	go test -run ${TEST_NAME} -race -failfast > testrun.log
 
 test: clean
-	./go-test-many.sh ${COUNT} 1 ${TEST_NAME}
+	./go-test-many.sh ${COUNT} 4 ${TEST_NAME}
 
 clean:
 	@rm *.log || true

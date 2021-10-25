@@ -21,12 +21,9 @@ func (kv *ShardKV) makeSnapshot() []byte {
 func (kv *ShardKV) installSnapshot(snapshot []byte) {
 	if snapshot == nil || len(snapshot) == 0 {
 		kv.lastApplied = 0
-		kv.shardStore = make(map[int]Shard)
+		kv.shardStore = make(map[int]*Shard)
 		for i := 0; i < shardctrler.NShards; i++ {
-			kv.shardStore[i] = Shard{
-				KV:     make(map[string]string),
-				Status: ShardServing,
-			}
+			kv.shardStore[i] = NewShard()
 		}
 		kv.sessions = make(map[int64]LastOperation)
 		kv.lastConfig = shardctrler.DefaultConfig()
@@ -36,7 +33,7 @@ func (kv *ShardKV) installSnapshot(snapshot []byte) {
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
 	var lastApplied int
-	var store map[int]Shard
+	var store map[int]*Shard
 	var sessions map[int64]LastOperation
 	var lastConfig shardctrler.Config
 	var currentConfig shardctrler.Config

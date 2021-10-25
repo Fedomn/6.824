@@ -7,7 +7,9 @@ import (
 
 const (
 	ExecuteTimeout       = 500 * time.Millisecond
-	MonitorConfigTimeout = 200 * time.Millisecond
+	MonitorConfigTimeout = 100 * time.Millisecond
+	MonitorPullTimeout   = 50 * time.Millisecond
+	MonitorGCTimeout     = 50 * time.Millisecond
 )
 
 const (
@@ -17,6 +19,7 @@ const (
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrOutdated    = "ErrOutdated"
 	ErrTimeout     = "ErrTimeout"
+	ErrNotReady    = "ErrNotReady"
 )
 
 type LastOperation struct {
@@ -121,4 +124,25 @@ func (cr CmdReply) clone() *CmdReply {
 		Response:   cr.Response,
 		LeaderHint: cr.LeaderHint,
 	}
+}
+
+type ShardsOpArgs struct {
+	ConfigNum int
+	ShardIDs  []int
+}
+
+func (sa ShardsOpArgs) String() string {
+	return fmt.Sprintf("{ConfigNum:%d,ShardIDs:%v}", sa.ConfigNum, sa.ShardIDs)
+}
+
+type ShardsOpReply struct {
+	Status         string
+	ConfigNum      int
+	Shards         map[int]map[string]string
+	LastOperations map[int64]LastOperation
+}
+
+func (sr ShardsOpReply) String() string {
+	return fmt.Sprintf("{ConfigNum:%d,Status:%s,Shards:%v,LastOperations:%v}",
+		sr.ConfigNum, sr.Status, sr.Shards, sr.LastOperations)
 }
