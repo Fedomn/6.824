@@ -102,7 +102,7 @@ func (kv *ShardKV) GetShardsData(args *ShardsOpArgs, reply *ShardsOpReply) {
 	kv.mu.RLock()
 	defer kv.mu.RUnlock()
 
-	DPrintf(kv.gid, kv.me, "GetShardsData process args:%v", args)
+	kv.DPrintf(kv.gid, kv.me, "GetShardsData process args:%v", args)
 	// 请求来的configNum比我大，说明我还未更新成最新的config，无法对外提供shard data
 	if kv.currentConfig.Num < args.ConfigNum {
 		reply.Status = ErrNotReady
@@ -128,12 +128,12 @@ func (kv *ShardKV) DeleteShardsData(args *ShardsOpArgs, reply *ShardsOpReply) {
 		reply.Status = ErrWrongLeader
 		return
 	}
-	DPrintf(kv.gid, kv.me, "DeleteShardsData process args:%v", args)
+	kv.DPrintf(kv.gid, kv.me, "DeleteShardsData process args:%v", args)
 
 	kv.mu.RLock()
 	if kv.currentConfig.Num > args.ConfigNum {
 		reply.Status = OK
-		DPrintf(kv.gid, kv.me, "DeleteShardsData alreadyProcess args:%v", args)
+		kv.DPrintf(kv.gid, kv.me, "DeleteShardsData alreadyProcess args:%v", args)
 		kv.mu.RUnlock()
 		return
 	}

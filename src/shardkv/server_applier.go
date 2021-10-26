@@ -10,11 +10,11 @@ func (kv *ShardKV) applier() {
 		select {
 		case msg := <-kv.applyCh:
 			kv.mu.Lock()
-			DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsg:%v", msg)
+			kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsg:%v", msg)
 			switch {
 			case msg.CommandValid:
 				if msg.CommandIndex <= kv.lastApplied {
-					DPrintf(kv.gid, kv.me, "ShardKVServerApplier discardOutdatedMsgIndex:%d lastApplied:%d", msg.CommandIndex, kv.lastApplied)
+					kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier discardOutdatedMsgIndex:%d lastApplied:%d", msg.CommandIndex, kv.lastApplied)
 					kv.mu.Unlock()
 					continue
 				}
@@ -45,23 +45,23 @@ func (kv *ShardKV) applier() {
 						if ch, ok := kv.notifyCh[msg.CommandIndex]; ok {
 							ch <- reply
 						} else {
-							DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
+							kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
 						}
 					} else {
-						DPrintf(kv.gid, kv.me, "ShardKVServerApplier lostLeadership")
+						kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier lostLeadership")
 					}
 				}
 
 				if kv.maxraftstate != -1 && kv.rfPersister.RaftStateSize() > kv.maxraftstate {
 					beforeSize := kv.rfPersister.RaftStateSize()
-					DPrintf(kv.gid, kv.me, "ShardKVServerApplier %d > %d willSnapshot shardStore:%v", beforeSize, kv.maxraftstate, kv.shardStore)
+					kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier %d > %d willSnapshot shardStore:%v", beforeSize, kv.maxraftstate, kv.shardStore)
 					kv.rf.Snapshot(msg.CommandIndex, kv.makeSnapshot())
-					DPrintf(kv.gid, kv.me, "ShardKVServerApplier afterSnapshotKvSize:%d", kv.rfPersister.RaftStateSize())
+					kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier afterSnapshotKvSize:%d", kv.rfPersister.RaftStateSize())
 				}
 			case msg.SnapshotValid:
 				if kv.rf.CondInstallSnapshot(msg.SnapshotTerm, msg.SnapshotIndex, msg.Snapshot) {
 					kv.installSnapshot(msg.Snapshot)
-					DPrintf(kv.gid, kv.me, "ShardKVServerApplier willInstallSnapshot:%v", kv.shardStore)
+					kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier willInstallSnapshot:%v", kv.shardStore)
 					kv.lastApplied = msg.SnapshotIndex
 				}
 			default:
@@ -76,19 +76,19 @@ func (kv *ShardKV) applier() {
 func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
 	shardId := key2shard(op.Key)
 	if !kv.canServe(shardId) {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier canNotServe shardId:%d status:%s", shardId, kv.shardStore[shardId].Status)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier canNotServe shardId:%d status:%s", shardId, kv.shardStore[shardId].Status)
 		return CmdReply{Status: ErrWrongGroup}
 	}
 
 	if kv.isOutdatedCommand(op.ClientId, op.SequenceNum) {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 		kv.mu.RUnlock()
 		return CmdReply{Status: ErrOutdated}
 	}
 
 	isGetOp := op.OpType == CmdOpGet
 	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated && isGetOp {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 		return lastReply
 	} else {
 		reply := kv.applyToStore(op, shardId)
@@ -102,13 +102,13 @@ func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
 // CmdConfig
 func (kv *ShardKV) applyConfig(latestConfig shardctrler.Config) CmdReply {
 	if latestConfig.Num == kv.currentConfig.Num+1 {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier updateLatestConfig to :%v", latestConfig)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier updateLatestConfig to :%v", latestConfig)
 		kv.updateShardStatus(latestConfig)
 		kv.lastConfig = kv.currentConfig
 		kv.currentConfig = latestConfig
 		return CmdReply{Status: OK}
 	}
-	DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectLatestConfig, due to configNum:%v != %v", latestConfig.Num, kv.currentConfig.Num+1)
+	kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectLatestConfig, due to configNum:%v != %v", latestConfig.Num, kv.currentConfig.Num+1)
 	return CmdReply{Status: ErrOutdated}
 }
 
@@ -132,7 +132,7 @@ func (kv *ShardKV) updateShardStatus(latestConfig shardctrler.Config) {
 // CmdInsertShards
 func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
 	if reply.ConfigNum == kv.currentConfig.Num {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, before:%v, replyShards:%v", kv.shardStore, reply.Shards)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, before:%v, replyShards:%v", kv.shardStore, reply.Shards)
 		for shardId, shardData := range reply.Shards {
 			shard := kv.shardStore[shardId]
 			// 自己的kv.monitorPull中发出command，标志 从其它gid的leader pull的reply返回了
@@ -143,7 +143,7 @@ func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
 				// 标志gc：leader已经拉取到了，告诉对方leader可以gc了
 				shard.Status = ShardNotifyPeerGidGC
 			} else {
-				DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards gotDuplicatedReply ignore")
+				kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards gotDuplicatedReply ignore")
 				break
 			}
 		}
@@ -152,17 +152,17 @@ func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
 				kv.sessions[clientId] = operation
 			}
 		}
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, after:%v", kv.shardStore)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, after:%v", kv.shardStore)
 		return CmdReply{Status: OK}
 	}
-	DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectOutdatedInsertShards:%d", reply.ConfigNum)
+	kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectOutdatedInsertShards:%d", reply.ConfigNum)
 	return CmdReply{Status: ErrOutdated}
 }
 
 // CmdDeleteShards
 func (kv *ShardKV) applyDeleteShards(args ShardsOpArgs) CmdReply {
 	if args.ConfigNum == kv.currentConfig.Num {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, before:%v, argsShards:%v", kv.shardStore, args.ShardIDs)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, before:%v, argsShards:%v", kv.shardStore, args.ShardIDs)
 		for _, shardId := range args.ShardIDs {
 			shard := kv.shardStore[shardId]
 			if shard.Status == ShardNotifyPeerGidGC { // pull完成后，在monitorGC中发出command，告诉自己 已经通知对方gid的leader gc成功了，因此需要再设置回Serving
@@ -171,14 +171,14 @@ func (kv *ShardKV) applyDeleteShards(args ShardsOpArgs) CmdReply {
 				kv.shardStore[shardId] = NewShard()
 				shard.Status = ShardNotServing
 			} else {
-				DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards gotDuplicatedReply ignore")
+				kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards gotDuplicatedReply ignore")
 				break
 			}
 		}
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, after:%v", kv.shardStore)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, after:%v", kv.shardStore)
 		return CmdReply{Status: OK}
 	}
-	DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectOutdatedDeleteShards:%d", args.ConfigNum)
+	kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier rejectOutdatedDeleteShards:%d", args.ConfigNum)
 	return CmdReply{Status: ErrOutdated}
 }
 

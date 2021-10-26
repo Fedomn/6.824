@@ -2,6 +2,7 @@ package raft
 
 import (
 	"6.824/labrpc"
+	"log"
 	"time"
 )
 
@@ -28,20 +29,20 @@ func (n *Node) run() {
 		case e := <-n.raft.eventCh:
 			//TPrintf(n.raft.me, "Receive event %+v", e)
 			if err := n.raft.Step(e); err != nil {
-				DPrintf(n.raft.me, "Step event err %v", err)
+				n.raft.DPrintf(n.raft.me, "Step event err %v", err)
 			}
 		case <-n.raft.killCh:
-			DPrintf(n.raft.me, "Stop raft")
+			n.raft.DPrintf(n.raft.me, "Stop raft")
 			return
 		}
 	}
 }
 
-func StartNode(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
+func StartNode(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg, glog *log.Logger) *Raft {
 	// 增加event channel buffer，保证send event尽量不会阻塞
 	// 这也要求整体架构基于event处理，不使用volatile variables
 	eventCh := make(chan Event, 100)
-	rf := newRaft(peers, me, persister, applyCh, eventCh)
+	rf := newRaft(peers, me, persister, applyCh, eventCh, glog)
 	rf.becomeFollower(rf.currentTerm, None)
 
 	n := newNode(rf)

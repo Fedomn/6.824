@@ -282,7 +282,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.StartNode(servers, me, persister, kv.applyCh)
+	kv.rf = raft.StartNode(servers, me, persister, kv.applyCh, nil)
 	kv.rfPersister = persister
 
 	// You may need initialization code here.

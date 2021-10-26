@@ -5,6 +5,7 @@ import (
 	"6.824/labrpc"
 	"6.824/raft"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -37,6 +38,8 @@ type ShardCtrler struct {
 	kvStore     map[string]string
 	sessions    map[int64]LastOperation
 	notifyCh    map[int]chan CommandReply
+
+	gLog *log.Logger
 }
 
 type LastOperation struct {
@@ -47,7 +50,7 @@ type LastOperation struct {
 func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
 	sc.mu.RLock()
 	if sc.isOutdatedCommand(args.ClientId, args.SequenceNum) {
-		DPrintf(sc.me, "ShardCtrlerServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
+		sc.DPrintf(sc.me, "ShardCtrlerServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
 		reply.Status = ErrOutdated
 		sc.mu.RUnlock()
 		return
@@ -55,7 +58,7 @@ func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
 	if isDuplicated, lastReply := sc.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
 		reply.Status = lastReply.Status
 		reply.Config = lastReply.Config
-		DPrintf(sc.me, "ShardCtrlerServer<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
+		sc.DPrintf(sc.me, "ShardCtrlerServer<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
 		sc.mu.RUnlock()
 		return
 	}
@@ -68,12 +71,12 @@ func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
 		SequenceNum: args.SequenceNum,
 	})
 	if !isLeader {
-		//DPrintf(sc.me, "ShardCtrlerServer reply ErrWrongLeader")
+		//sc.DPrintf(sc.me, "ShardCtrlerServer reply ErrWrongLeader")
 		reply.Status = ErrWrongLeader
 		return
 	}
 
-	DPrintf(sc.me, "ShardCtrlerServer<-[%d:%d] Leader startCommand <%d,%d> args:%s", args.ClientId, args.SequenceNum, term, index, args)
+	sc.DPrintf(sc.me, "ShardCtrlerServer<-[%d:%d] Leader startCommand <%d,%d> args:%s", args.ClientId, args.SequenceNum, term, index, args)
 
 	sc.mu.Lock()
 	sc.buildNotifyCh(index)
@@ -84,10 +87,10 @@ func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
 	case res := <-ch:
 		reply.Status = res.Status
 		reply.Config = res.Config
-		DPrintf(sc.me, "ShardCtrlerServer->[%d:%d] reply:%s", args.ClientId, args.SequenceNum, reply)
+		sc.DPrintf(sc.me, "ShardCtrlerServer->[%d:%d] reply:%s", args.ClientId, args.SequenceNum, reply)
 	case <-time.After(ExecuteTimeout):
 		reply.Status = ErrTimeout
-		DPrintf(sc.me, "ShardCtrlerServer->[%d:%d] timeout", args.ClientId, args.SequenceNum)
+		sc.DPrintf(sc.me, "ShardCtrlerServer->[%d:%d] timeout", args.ClientId, args.SequenceNum)
 	}
 
 	go sc.releaseNotifyCh(index)
@@ -98,11 +101,11 @@ func (sc *ShardCtrler) applier() {
 		select {
 		case msg := <-sc.applyCh:
 			sc.mu.Lock()
-			DPrintf(sc.me, "ShardCtrlerServerApplier gotApplyMsg:%v", msg)
+			sc.DPrintf(sc.me, "ShardCtrlerServerApplier gotApplyMsg:%v", msg)
 			switch {
 			case msg.CommandValid:
 				if msg.CommandIndex <= sc.lastApplied {
-					DPrintf(sc.me, "ShardCtrlerServerApplier discardOutdatedMsgIndex:%d lastApplied:%d", msg.CommandIndex, sc.lastApplied)
+					sc.DPrintf(sc.me, "ShardCtrlerServerApplier discardOutdatedMsgIndex:%d lastApplied:%d", msg.CommandIndex, sc.lastApplied)
 					sc.mu.Unlock()
 					continue
 				}
@@ -112,14 +115,14 @@ func (sc *ShardCtrler) applier() {
 				reply := CommandReply{}
 
 				if sc.isOutdatedCommand(op.ClientId, op.SequenceNum) {
-					DPrintf(sc.me, "ShardCtrlerServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+					sc.DPrintf(sc.me, "ShardCtrlerServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 					reply.Status = ErrOutdated
 					sc.mu.RUnlock()
 					return
 				}
 
 				if isDuplicated, lastReply := sc.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {
-					DPrintf(sc.me, "ShardCtrlerServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
+					sc.DPrintf(sc.me, "ShardCtrlerServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 					reply = lastReply
 				} else {
 					reply = sc.applyToStore(op)
@@ -131,10 +134,10 @@ func (sc *ShardCtrler) applier() {
 						if ch, ok := sc.notifyCh[msg.CommandIndex]; ok {
 							ch <- reply
 						} else {
-							DPrintf(sc.me, "ShardCtrlerServerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
+							sc.DPrintf(sc.me, "ShardCtrlerServerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
 						}
 					} else {
-						DPrintf(sc.me, "ShardCtrlerServerApplier lostLeadership")
+						sc.DPrintf(sc.me, "ShardCtrlerServerApplier lostLeadership")
 					}
 				}
 			default:
@@ -172,13 +175,14 @@ func DefaultConfig() Config {
 	}
 }
 
-func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, testNum string) *ShardCtrler {
 	sc := new(ShardCtrler)
+	sc.gLog = initGlog(testNum)
 	sc.me = me
 	labgob.Register(Op{})
 
 	sc.applyCh = make(chan raft.ApplyMsg)
-	sc.rf = raft.StartNode(servers, me, persister, sc.applyCh)
+	sc.rf = raft.StartNode(servers, me, persister, sc.applyCh, sc.gLog)
 	sc.rfPersister = persister
 
 	sc.lastApplied = 0
@@ -188,7 +192,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 
 	go sc.applier()
 
-	DPrintf(sc.me, "ShardCtrlerServer init success")
+	sc.DPrintf(sc.me, "ShardCtrlerServer init success")
 
 	return sc
 }

@@ -7,10 +7,7 @@ import (
 	"os"
 )
 
-var gLog *log.Logger
-
 func init() {
-	gLog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 	color.NoColor = false
 }
 
@@ -36,10 +33,25 @@ var colorMap = map[int]func(format string, a ...interface{}) string{
 const Debug = true
 const Trace = false
 
-func DPrintf(gid, rfme int, format string, a ...interface{}) {
+const filenamePattern = "test-shardkv-%s-%d.log"
+
+func initGlog(testNum string, gid int) *log.Logger {
+	if testNum == "0" {
+		return log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	} else {
+		filename := fmt.Sprintf(filenamePattern, testNum, gid)
+		fd, err := os.OpenFile(filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+		if err != nil {
+			panic(fmt.Sprintf("init log file err %v", err))
+		}
+		return log.New(fd, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	}
+}
+
+func (kv *ShardKV) DPrintf(gid, rfme int, format string, a ...interface{}) {
 	if Debug {
 		prefix := fmt.Sprintf("[%d-%d] ", gid, rfme)
-		gLog.Println(colorMap[rfme](prefix+format, a...))
+		kv.gLog.Println(colorMap[rfme](prefix+format, a...))
 	}
 	return
 }
@@ -47,14 +59,7 @@ func DPrintf(gid, rfme int, format string, a ...interface{}) {
 func CDPrintf(clientId int64, format string, a ...interface{}) {
 	if Debug {
 		prefix := fmt.Sprintf("[%d] ", clientId)
-		gLog.Println(color.HiWhiteString(prefix+format, a...))
+		fmt.Println(color.HiWhiteString(prefix+format, a...))
 	}
 	return
-}
-
-func TPrintf(rfme int, format string, a ...interface{}) {
-	if Trace {
-		prefix := fmt.Sprintf("[%d] ", rfme)
-		gLog.Println(colorMap[rfme](prefix+format, a...))
-	}
 }

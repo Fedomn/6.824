@@ -14,7 +14,7 @@ func (kv *ShardKV) monitorConfiguration() {
 			for shardId, shard := range kv.shardStore {
 				if shard.Status == ShardPulling || shard.Status == ShardBePulling || shard.Status == ShardNotifyPeerGidGC {
 					canPullConfig = false
-					DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorConfiguration CanNotPullConfig, because shard%v status %s", shardId, shard.Status)
+					kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorConfiguration CanNotPullConfig, because shard%v status %s", shardId, shard.Status)
 					break
 				}
 			}
@@ -24,7 +24,7 @@ func (kv *ShardKV) monitorConfiguration() {
 			if canPullConfig {
 				latestConfig := kv.sc.Query(currentConfigNum + 1)
 				if latestConfig.Num == currentConfigNum+1 {
-					DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorConfiguration PulledLatestConfig %v", latestConfig)
+					kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorConfiguration PulledLatestConfig %v", latestConfig)
 					kv.StartCmdAndWait(Command{CmdConfig, latestConfig}, &CmdReply{})
 				}
 			}
@@ -43,7 +43,7 @@ func (kv *ShardKV) monitorPull() {
 			kv.mu.RUnlock()
 
 			for gid, shardIDs := range gid2shardIDs {
-				DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorPull StartPullShards from gid:%d, shardIDs:%v", gid, shardIDs)
+				kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorPull StartPullShards from gid:%d, shardIDs:%v", gid, shardIDs)
 				_gid := gid
 				_shardIDs := shardIDs
 				go func() {
@@ -77,7 +77,7 @@ func (kv *ShardKV) pullShardData(lastConfig shardctrler.Config, configNum, gid i
 		pullReply := ShardsOpReply{}
 		srv := kv.make_end(server)
 		if srv.Call("ShardKV.GetShardsData", &pullArgs, &pullReply) && pullReply.Status == OK {
-			DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorPull PullShardData %d<%v> success, will startInsertShardsCommand", gid, shardIDs)
+			kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorPull PullShardData %d<%v> success, will startInsertShardsCommand", gid, shardIDs)
 			kv.StartCmdAndWait(Command{CmdInsertShards, pullReply}, &CmdReply{})
 			return
 		}
@@ -94,7 +94,7 @@ func (kv *ShardKV) monitorGC() {
 			kv.mu.RUnlock()
 
 			for gid, shardIDs := range gid2shardIDs {
-				DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorGC StartDeleteShards from gid:%d, shardIDs:%v", gid, shardIDs)
+				kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorGC StartDeleteShards from gid:%d, shardIDs:%v", gid, shardIDs)
 				_gid := gid
 				_shardIDs := shardIDs
 				go func() {
@@ -113,7 +113,7 @@ func (kv *ShardKV) deleteShardData(lastConfig shardctrler.Config, configNum, gid
 		pullReply := ShardsOpReply{}
 		srv := kv.make_end(server)
 		if srv.Call("ShardKV.DeleteShardsData", &pullArgs, &pullReply) && pullReply.Status == OK {
-			DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorGC DeleteShardData %d<%v> success, will startDeleteShardsCommand", gid, shardIDs)
+			kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorGC DeleteShardData %d<%v> success, will startDeleteShardsCommand", gid, shardIDs)
 			// 这里的CmdDeleteShards目的：重置 标记为ShardNotifyPeerGidGC 的 shard 为 ShardServing
 			kv.StartCmdAndWait(Command{CmdDeleteShards, pullArgs}, &CmdReply{})
 			return
@@ -125,7 +125,7 @@ func (kv *ShardKV) monitorNeedNoop() {
 	for !kv.killed() {
 		if _, isLeader := kv.rf.GetState(); isLeader {
 			if !kv.rf.HasLogInCurrentTerm() {
-				DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorNoop StartNoop")
+				kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorNoop StartNoop")
 				kv.StartCmdAndWait(Command{CmdNoop, ""}, &CmdReply{})
 			}
 		}

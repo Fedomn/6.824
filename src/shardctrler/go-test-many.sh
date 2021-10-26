@@ -138,11 +138,11 @@ for i in $(seq "$((success+failed+1))" "$runs"); do
 	# Run the tester, passing -test.run if necessary
 	if [[ -z "$test" ]]; then
 #		./tester -test.v 2> "test-${i}.err" > "test-${i}.log" &
-		./tester -test.v 1> "test-${i}.log" &
+		./tester -tn $i -test.v 1> "test-${i}.log" &
 		pid=$!
 	else
 #		./tester -test.run "$test" -test.v 2> "test-${i}.err" > "test-${i}.log" &
-		./tester -test.run "$test" -test.v 1> "test-${i}.log" &
+		./tester -tn $i -test.run "$test" -test.v 1> "test-${i}.log" &
 		pid=$!
 	fi
 

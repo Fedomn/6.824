@@ -11,11 +11,11 @@ import (
 func (rf *Raft) CondInstallSnapshot(snapshotTerm int, snapshotIndex int, snapshot []byte) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf(rf.me, "CondInstallSnapshot begin, snapshotIndex:%v commitIndex:%v lastApplied:%v",
+	rf.DPrintf(rf.me, "CondInstallSnapshot begin, snapshotIndex:%v commitIndex:%v lastApplied:%v",
 		snapshotIndex, rf.commitIndex, rf.lastApplied)
 	if snapshotIndex <= rf.commitIndex {
 		// 一旦进入commitIndex，最终都会被apply，因此也不需要install snapshot了
-		DPrintf(rf.me, "CondInstallSnapshot outdated snapshotIndex:%v <= commitIndex:%v, no need to install snapshot", snapshotIndex, rf.commitIndex)
+		rf.DPrintf(rf.me, "CondInstallSnapshot outdated snapshotIndex:%v <= commitIndex:%v, no need to install snapshot", snapshotIndex, rf.commitIndex)
 		return false
 	}
 
@@ -32,7 +32,7 @@ func (rf *Raft) CondInstallSnapshot(snapshotTerm int, snapshotIndex int, snapsho
 	rf.lastApplied = snapshotIndex
 
 	rf.persister.SaveStateAndSnapshot(rf.encodeRaftState(), snapshot)
-	DPrintf(rf.me, "CondInstallSnapshot installed snapshot success, log:%v, commitIndex:%v", rf.log, rf.commitIndex)
+	rf.DPrintf(rf.me, "CondInstallSnapshot installed snapshot success, log:%v, commitIndex:%v", rf.log, rf.commitIndex)
 	return true
 }
 
@@ -42,11 +42,11 @@ func (rf *Raft) CondInstallSnapshot(snapshotTerm int, snapshotIndex int, snapsho
 func (rf *Raft) Snapshot(snapshotIndex int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf(rf.me, "Snapshot begin, snapshotIndex:%v", snapshotIndex)
+	rf.DPrintf(rf.me, "Snapshot begin, snapshotIndex:%v", snapshotIndex)
 
 	// 如果snapshot index在commitIndex之后，说明还不能打snapshot，必须是committed的log才能认为可以snapshot
 	if snapshotIndex > rf.commitIndex {
-		DPrintf(rf.me, "Snapshot snapshotIndex:%v > commitIndex:%v, so reject this snapshot operation",
+		rf.DPrintf(rf.me, "Snapshot snapshotIndex:%v > commitIndex:%v, so reject this snapshot operation",
 			snapshotIndex, rf.commitIndex)
 		return
 	}
@@ -55,7 +55,7 @@ func (rf *Raft) Snapshot(snapshotIndex int, snapshot []byte) {
 	rf.log = rf.getEntriesToEnd(snapshotIndex)
 	rf.log[0].Command = nil
 	rf.persister.SaveStateAndSnapshot(rf.encodeRaftState(), snapshot)
-	DPrintf(rf.me, "Snapshot snapshotIndex:%v snapshot:%v, after log:%v", snapshotIndex, binary.BigEndian.Uint32(snapshot), rf.log)
+	rf.DPrintf(rf.me, "Snapshot snapshotIndex:%v snapshot:%v, after log:%v", snapshotIndex, binary.BigEndian.Uint32(snapshot), rf.log)
 }
 
 func (rf *Raft) asyncSnapshoter() {
@@ -73,5 +73,5 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	now := time.Now()
 	rf.sendWait(Event{Type: EventSnap, From: args.LeaderId, To: rf.me, Term: args.Term, Args: args, Reply: reply, DoneC: make(chan struct{})})
 	duration := time.Now().Sub(now)
-	TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v consume time:%s", rf.me, args.LeaderId, duration)
+	rf.TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v consume time:%s", rf.me, args.LeaderId, duration)
 }

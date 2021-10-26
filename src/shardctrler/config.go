@@ -257,7 +257,7 @@ func (cfg *config) ShutdownServer(i int) {
 }
 
 // If restart servers, first call ShutdownServer
-func (cfg *config) StartServer(i int) {
+func (cfg *config) StartServer(i int, testNum string) {
 	cfg.mu.Lock()
 
 	// a fresh set of outgoing ClientEnd names.
@@ -286,7 +286,7 @@ func (cfg *config) StartServer(i int) {
 
 	cfg.mu.Unlock()
 
-	cfg.servers[i] = StartServer(ends, i, cfg.saved[i])
+	cfg.servers[i] = StartServer(ends, i, cfg.saved[i], testNum)
 
 	kvsvc := labrpc.MakeService(cfg.servers[i])
 	rfsvc := labrpc.MakeService(cfg.servers[i].rf)
@@ -331,7 +331,7 @@ func (cfg *config) make_partition() ([]int, []int) {
 	return p1, p2
 }
 
-func make_config(t *testing.T, n int, unreliable bool) *config {
+func make_config(t *testing.T, n int, unreliable bool, testNum string) *config {
 	runtime.GOMAXPROCS(4)
 	cfg := &config{}
 	cfg.t = t
@@ -346,7 +346,7 @@ func make_config(t *testing.T, n int, unreliable bool) *config {
 
 	// create a full set of KV servers.
 	for i := 0; i < cfg.n; i++ {
-		cfg.StartServer(i)
+		cfg.StartServer(i, testNum)
 	}
 
 	cfg.ConnectAll()

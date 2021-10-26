@@ -1,7 +1,9 @@
 package shardctrler
 
 import (
+	"flag"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -80,7 +82,7 @@ func check_same_config(t *testing.T, c1 Config, c2 Config) {
 
 func TestBasic(t *testing.T) {
 	const nservers = 3
-	cfg := make_config(t, nservers, false)
+	cfg := make_config(t, nservers, false, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient(cfg.All())
@@ -129,7 +131,7 @@ func TestBasic(t *testing.T) {
 			c := ck.Query(cfa[i].Num)
 			check_same_config(t, c, cfa[i])
 		}
-		cfg.StartServer(s)
+		cfg.StartServer(s, *testNum)
 		cfg.ConnectAll()
 	}
 
@@ -252,7 +254,7 @@ func TestBasic(t *testing.T) {
 
 func TestMulti(t *testing.T) {
 	const nservers = 3
-	cfg := make_config(t, nservers, false)
+	cfg := make_config(t, nservers, false, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient(cfg.All())
@@ -400,4 +402,11 @@ func TestMulti(t *testing.T) {
 	check_same_config(t, c, c1)
 
 	fmt.Printf("  ... Passed\n")
+}
+
+var testNum = flag.String("tn", "0", "test number")
+
+func TestMain(t *testing.M) {
+	flag.Parse()
+	os.Exit(t.Run())
 }

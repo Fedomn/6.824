@@ -26,19 +26,19 @@ func (rf *Raft) startAppendEntries(isHeartbeat bool) {
 			reply := &InstallSnapshotReply{}
 			go func() {
 				now := time.Now()
-				DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v sendRPC %+v", rf.me, peerIdx, args)
+				rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v sendRPC %+v", rf.me, peerIdx, args)
 				if ok := rf.peers[peerIdx].Call("Raft.InstallSnapshot", args, reply); !ok {
 					if !rf.killed() {
-						TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v RPC not reply", rf.me, peerIdx)
+						rf.TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v RPC not reply", rf.me, peerIdx)
 					}
 				} else {
 					if reply.Abort {
-						TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v abortReply", rf.me, peerIdx)
+						rf.TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v abortReply", rf.me, peerIdx)
 						return
 					}
 					duration := time.Now().Sub(now)
 					rf.send(Event{Type: EventSnapResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
-					TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v consume time:%s", rf.me, peerIdx, duration)
+					rf.TRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v consume time:%s", rf.me, peerIdx, duration)
 				}
 			}()
 		} else {
@@ -48,7 +48,7 @@ func (rf *Raft) startAppendEntries(isHeartbeat bool) {
 				rpcSeqStatus := rf.sendRpcLatestSeq[peerIdx]
 				inflightCnt := rpcSeqStatus.SendSeq - rpcSeqStatus.RecvSeq
 				if inflightCnt >= maxInflightAppCnt {
-					DPrintf(rf.me, "InflightAppControl[%d] SendSeq:%v - RecvSeq:%v = inflightCnt:%v >= %d", peerIdx, rpcSeqStatus.SendSeq, rpcSeqStatus.RecvSeq, inflightCnt, maxInflightAppCnt)
+					rf.DPrintf(rf.me, "InflightAppControl[%d] SendSeq:%v - RecvSeq:%v = inflightCnt:%v >= %d", peerIdx, rpcSeqStatus.SendSeq, rpcSeqStatus.RecvSeq, inflightCnt, maxInflightAppCnt)
 					continue
 				}
 			}
@@ -68,19 +68,19 @@ func (rf *Raft) startAppendEntries(isHeartbeat bool) {
 			reply := &AppendEntriesReply{}
 			go func() {
 				now := time.Now()
-				DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v sendRPC %+v", rf.me, peerIdx, args)
+				rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v sendRPC %+v", rf.me, peerIdx, args)
 				if ok := rf.peers[peerIdx].Call("Raft.AppendEntries", args, reply); !ok {
 					if !rf.killed() {
-						TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
+						rf.TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v RPC not reply", rf.me, peerIdx)
 					}
 				} else {
 					if reply.Abort {
-						TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v abortReply", rf.me, peerIdx)
+						rf.TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v abortReply", rf.me, peerIdx)
 						return
 					}
 					duration := time.Now().Sub(now)
 					rf.send(Event{Type: EventAppResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
-					TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v consume time:%s", rf.me, peerIdx, duration)
+					rf.TRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v consume time:%s", rf.me, peerIdx, duration)
 				}
 			}()
 		}
@@ -91,5 +91,5 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	now := time.Now()
 	rf.sendWait(Event{Type: EventApp, From: args.LeaderId, To: rf.me, Term: args.Term, Args: args, Reply: reply, DoneC: make(chan struct{})})
 	duration := time.Now().Sub(now)
-	TRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v consume time:%s", rf.me, args.LeaderId, duration)
+	rf.TRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v consume time:%s", rf.me, args.LeaderId, duration)
 }

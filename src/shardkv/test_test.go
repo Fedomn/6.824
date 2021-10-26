@@ -1,6 +1,13 @@
 package shardkv
 
-import "6.824/porcupine"
+import (
+	"6.824/porcupine"
+	"flag"
+	"log"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+)
 import "6.824/models"
 import "testing"
 import "strconv"
@@ -26,7 +33,7 @@ func check(t *testing.T, ck *Clerk, key string, value string) {
 func TestStaticShards(t *testing.T) {
 	fmt.Printf("Test: static shards ...\n")
 
-	cfg := make_config(t, 3, false, -1)
+	cfg := make_config(t, 3, false, -1, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -86,7 +93,7 @@ func TestStaticShards(t *testing.T) {
 	}
 
 	// bring the crashed shard/group back to life.
-	cfg.StartGroup(1)
+	cfg.StartGroup(1, *testNum)
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 	}
@@ -97,7 +104,7 @@ func TestStaticShards(t *testing.T) {
 func TestJoinLeave(t *testing.T) {
 	fmt.Printf("Test: join then leave ...\n")
 
-	cfg := make_config(t, 3, false, -1)
+	cfg := make_config(t, 3, false, -1, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -150,7 +157,7 @@ func TestJoinLeave(t *testing.T) {
 func TestSnapshot(t *testing.T) {
 	fmt.Printf("Test: snapshots, join, and leave ...\n")
 
-	cfg := make_config(t, 3, false, 1000)
+	cfg := make_config(t, 3, false, 1000, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -204,9 +211,9 @@ func TestSnapshot(t *testing.T) {
 	cfg.ShutdownGroup(1)
 	cfg.ShutdownGroup(2)
 
-	cfg.StartGroup(0)
-	cfg.StartGroup(1)
-	cfg.StartGroup(2)
+	cfg.StartGroup(0, *testNum)
+	cfg.StartGroup(1, *testNum)
+	cfg.StartGroup(2, *testNum)
 
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
@@ -218,7 +225,7 @@ func TestSnapshot(t *testing.T) {
 func TestMissChange(t *testing.T) {
 	fmt.Printf("Test: servers miss configuration changes...\n")
 
-	cfg := make_config(t, 3, false, 1000)
+	cfg := make_config(t, 3, false, 1000, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -263,9 +270,9 @@ func TestMissChange(t *testing.T) {
 		va[i] += x
 	}
 
-	cfg.StartServer(0, 0)
-	cfg.StartServer(1, 0)
-	cfg.StartServer(2, 0)
+	cfg.StartServer(0, 0, *testNum)
+	cfg.StartServer(1, 0, *testNum)
+	cfg.StartServer(2, 0, *testNum)
 
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
@@ -290,9 +297,9 @@ func TestMissChange(t *testing.T) {
 		va[i] += x
 	}
 
-	cfg.StartServer(0, 1)
-	cfg.StartServer(1, 1)
-	cfg.StartServer(2, 1)
+	cfg.StartServer(0, 1, *testNum)
+	cfg.StartServer(1, 1, *testNum)
+	cfg.StartServer(2, 1, *testNum)
 
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
@@ -304,7 +311,7 @@ func TestMissChange(t *testing.T) {
 func TestConcurrent1(t *testing.T) {
 	fmt.Printf("Test: concurrent puts and configuration changes...\n")
 
-	cfg := make_config(t, 3, false, 100)
+	cfg := make_config(t, 3, false, 100, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -354,9 +361,9 @@ func TestConcurrent1(t *testing.T) {
 	cfg.leave(2)
 
 	time.Sleep(100 * time.Millisecond)
-	cfg.StartGroup(0)
-	cfg.StartGroup(1)
-	cfg.StartGroup(2)
+	cfg.StartGroup(0, *testNum)
+	cfg.StartGroup(1, *testNum)
+	cfg.StartGroup(2, *testNum)
 
 	time.Sleep(100 * time.Millisecond)
 	cfg.join(0)
@@ -383,9 +390,13 @@ func TestConcurrent1(t *testing.T) {
 // group might need to fetch shard contents.
 //
 func TestConcurrent2(t *testing.T) {
+	go func() {
+		log.Println(http.ListenAndServe("0.0.0.0:8082", nil))
+	}()
+
 	fmt.Printf("Test: more concurrent puts and configuration changes...\n")
 
-	cfg := make_config(t, 3, false, -1)
+	cfg := make_config(t, 3, false, -1, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -436,8 +447,8 @@ func TestConcurrent2(t *testing.T) {
 	cfg.ShutdownGroup(1)
 	cfg.ShutdownGroup(2)
 	time.Sleep(1000 * time.Millisecond)
-	cfg.StartGroup(1)
-	cfg.StartGroup(2)
+	cfg.StartGroup(1, *testNum)
+	cfg.StartGroup(2, *testNum)
 
 	time.Sleep(2 * time.Second)
 
@@ -456,7 +467,7 @@ func TestConcurrent2(t *testing.T) {
 func TestConcurrent3(t *testing.T) {
 	fmt.Printf("Test: concurrent configuration change and restart...\n")
 
-	cfg := make_config(t, 3, false, 300)
+	cfg := make_config(t, 3, false, 300, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -497,9 +508,9 @@ func TestConcurrent3(t *testing.T) {
 		cfg.ShutdownGroup(0)
 		cfg.ShutdownGroup(1)
 		cfg.ShutdownGroup(2)
-		cfg.StartGroup(0)
-		cfg.StartGroup(1)
-		cfg.StartGroup(2)
+		cfg.StartGroup(0, *testNum)
+		cfg.StartGroup(1, *testNum)
+		cfg.StartGroup(2, *testNum)
 
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
 		cfg.leave(1)
@@ -524,7 +535,7 @@ func TestConcurrent3(t *testing.T) {
 func TestUnreliable1(t *testing.T) {
 	fmt.Printf("Test: unreliable 1...\n")
 
-	cfg := make_config(t, 3, true, 100)
+	cfg := make_config(t, 3, true, 100, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -566,7 +577,7 @@ func TestUnreliable1(t *testing.T) {
 func TestUnreliable2(t *testing.T) {
 	fmt.Printf("Test: unreliable 2...\n")
 
-	cfg := make_config(t, 3, true, 100)
+	cfg := make_config(t, 3, true, 100, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -629,7 +640,7 @@ func TestUnreliable2(t *testing.T) {
 func TestUnreliable3(t *testing.T) {
 	fmt.Printf("Test: unreliable 3...\n")
 
-	cfg := make_config(t, 3, true, 100)
+	cfg := make_config(t, 3, true, 100, *testNum)
 	defer cfg.cleanup()
 
 	begin := time.Now()
@@ -739,7 +750,7 @@ func TestChallenge1Delete(t *testing.T) {
 	fmt.Printf("Test: shard deletion (challenge 1) ...\n")
 
 	// "1" means force snapshot after every log entry.
-	cfg := make_config(t, 3, false, 1)
+	cfg := make_config(t, 3, false, 1, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -824,7 +835,7 @@ func TestChallenge1Delete(t *testing.T) {
 func TestChallenge2Unaffected(t *testing.T) {
 	fmt.Printf("Test: unaffected shard access (challenge 2) ...\n")
 
-	cfg := make_config(t, 3, true, 100)
+	cfg := make_config(t, 3, true, 100, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -894,7 +905,7 @@ func TestChallenge2Unaffected(t *testing.T) {
 func TestChallenge2Partial(t *testing.T) {
 	fmt.Printf("Test: partial migration shard access (challenge 2) ...\n")
 
-	cfg := make_config(t, 3, true, 100)
+	cfg := make_config(t, 3, true, 100, *testNum)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -945,4 +956,11 @@ func TestChallenge2Partial(t *testing.T) {
 	}
 
 	fmt.Printf("  ... Passed\n")
+}
+
+var testNum = flag.String("tn", "0", "test number")
+
+func TestMain(t *testing.M) {
+	flag.Parse()
+	os.Exit(t.Run())
 }

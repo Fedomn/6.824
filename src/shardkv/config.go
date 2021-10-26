@@ -201,7 +201,7 @@ func (cfg *config) ShutdownGroup(gi int) {
 }
 
 // start i'th server in gi'th group
-func (cfg *config) StartServer(gi int, i int) {
+func (cfg *config) StartServer(gi int, i int, testNum string) {
 	cfg.mu.Lock()
 
 	gg := cfg.groups[gi]
@@ -251,7 +251,7 @@ func (cfg *config) StartServer(gi int, i int) {
 			cfg.net.Connect(name, servername)
 			cfg.net.Enable(name, true)
 			return end
-		})
+		}, testNum)
 
 	kvsvc := labrpc.MakeService(gg.servers[i])
 	rfsvc := labrpc.MakeService(gg.servers[i].rf)
@@ -261,13 +261,13 @@ func (cfg *config) StartServer(gi int, i int) {
 	cfg.net.AddServer(cfg.servername(gg.gid, i), srv)
 }
 
-func (cfg *config) StartGroup(gi int) {
+func (cfg *config) StartGroup(gi int, testNum string) {
 	for i := 0; i < cfg.n; i++ {
-		cfg.StartServer(gi, i)
+		cfg.StartServer(gi, i, testNum)
 	}
 }
 
-func (cfg *config) StartCtrlerserver(i int) {
+func (cfg *config) StartCtrlerserver(i int, testNum string) {
 	// ClientEnds to talk to other controler replicas.
 	ends := make([]*labrpc.ClientEnd, cfg.nctrlers)
 	for j := 0; j < cfg.nctrlers; j++ {
@@ -279,7 +279,7 @@ func (cfg *config) StartCtrlerserver(i int) {
 
 	p := raft.MakePersister()
 
-	cfg.ctrlerservers[i] = shardctrler.StartServer(ends, i, p)
+	cfg.ctrlerservers[i] = shardctrler.StartServer(ends, i, p, testNum)
 
 	msvc := labrpc.MakeService(cfg.ctrlerservers[i])
 	rfsvc := labrpc.MakeService(cfg.ctrlerservers[i].Raft())
@@ -335,7 +335,7 @@ func (cfg *config) leavem(gis []int) {
 
 var ncpu_once sync.Once
 
-func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config {
+func make_config(t *testing.T, n int, unreliable bool, maxraftstate int, testNum string) *config {
 	ncpu_once.Do(func() {
 		if runtime.NumCPU() < 2 {
 			fmt.Printf("warning: only one CPU, which may conceal locking bugs\n")
@@ -353,7 +353,7 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 	cfg.nctrlers = 3
 	cfg.ctrlerservers = make([]*shardctrler.ShardCtrler, cfg.nctrlers)
 	for i := 0; i < cfg.nctrlers; i++ {
-		cfg.StartCtrlerserver(i)
+		cfg.StartCtrlerserver(i, testNum)
 	}
 	cfg.mck = cfg.shardclerk()
 
@@ -369,7 +369,7 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 		gg.endnames = make([][]string, cfg.n)
 		gg.mendnames = make([][]string, cfg.nctrlers)
 		for i := 0; i < cfg.n; i++ {
-			cfg.StartServer(gi, i)
+			cfg.StartServer(gi, i, testNum)
 		}
 	}
 

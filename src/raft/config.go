@@ -272,7 +272,7 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 
 	applyCh := make(chan ApplyMsg)
 
-	rf := StartNode(ends, i, cfg.saved[i], applyCh)
+	rf := StartNode(ends, i, cfg.saved[i], applyCh, nil)
 
 	cfg.mu.Lock()
 	cfg.rafts[i] = rf

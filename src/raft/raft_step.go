@@ -20,7 +20,7 @@ func (rf *Raft) Step(e Event) error {
 		args := e.Args.(*RequestVoteArgs)
 		reply := e.Reply.(*RequestVoteReply)
 		if args.Seq <= rf.recvRpcLatestSeq[e.From] {
-			DRpcPrintf(rf.me, args.Seq, "%s %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", e.Type, rf.me, args.CandidateId, args.Seq, rf.recvRpcLatestSeq[e.From])
+			rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", e.Type, rf.me, args.CandidateId, args.Seq, rf.recvRpcLatestSeq[e.From])
 			reply.Abort = true
 			return nil
 		}
@@ -28,19 +28,19 @@ func (rf *Raft) Step(e Event) error {
 
 		switch {
 		case args.Term < rf.currentTerm:
-			DRpcPrintf(rf.me, args.Seq, "%s %v<-%v currentTerm %v > term %v, ignore lower term", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term)
+			rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v currentTerm %v > term %v, ignore lower term", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term)
 			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
 		case args.Term == rf.currentTerm:
 			if rf.votedFor != None && rf.votedFor != args.CandidateId {
-				DRpcPrintf(rf.me, args.Seq, "%s %v<-%v currentTerm %v == term %v, already votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
+				rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v currentTerm %v == term %v, already votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
 				reply.Term = rf.currentTerm
 				reply.VoteGranted = false
 			} else {
 				rf.votedFor = args.CandidateId
 				reply.Term = rf.currentTerm
 				reply.VoteGranted = true
-				DRpcPrintf(rf.me, args.Seq, "%s %v<-%v currentTerm %v == term %v, haven't vote, will votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
+				rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v currentTerm %v == term %v, haven't vote, will votedFor %v", e.Type, rf.me, args.CandidateId, rf.currentTerm, args.Term, rf.votedFor)
 			}
 		case args.Term > rf.currentTerm:
 			passCheck := true
@@ -48,13 +48,13 @@ func (rf *Raft) Step(e Event) error {
 				lastLogIndex, lastLogTerm := rf.getLastLogIndexTerm()
 				if args.LastLogTerm < lastLogTerm {
 					passCheck = false
-					DRpcPrintf(rf.me, args.Seq, "%s %v<-%v fail election restriction check about term. %v < %v", e.Type, rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
+					rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v fail election restriction check about term. %v < %v", e.Type, rf.me, args.CandidateId, args.LastLogTerm, lastLogTerm)
 					break
 				}
 
 				if args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex {
 					passCheck = false
-					DRpcPrintf(rf.me, args.Seq, "%s %v<-%v fail election restriction check about index when same term. %v < %v", e.Type, rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
+					rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v fail election restriction check about index when same term. %v < %v", e.Type, rf.me, args.CandidateId, args.LastLogIndex, lastLogIndex)
 					break
 				}
 			}
@@ -63,7 +63,7 @@ func (rf *Raft) Step(e Event) error {
 			if e.Type == EventPreVote {
 				reply.VoteGranted = passCheck
 				reply.Term = rf.currentTerm
-				DRpcPrintf(rf.me, args.Seq, "%s %v<-%v reply:%+v", e.Type, rf.me, args.CandidateId, reply)
+				rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v reply:%+v", e.Type, rf.me, args.CandidateId, reply)
 				break
 			}
 
@@ -79,7 +79,7 @@ func (rf *Raft) Step(e Event) error {
 			}
 
 			if rf.state != StateFollower {
-				DRpcPrintf(rf.me, args.Seq, "%s %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately", e.Type, rf.me, args.CandidateId, rf.state, originalCurrentTerm, reply.Term)
+				rf.DRpcPrintf(rf.me, args.Seq, "%s %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately", e.Type, rf.me, args.CandidateId, rf.state, originalCurrentTerm, reply.Term)
 				rf.becomeFollower(args.Term, None)
 			}
 		}
@@ -91,7 +91,7 @@ func (rf *Raft) Step(e Event) error {
 		args := e.Args.(*AppendEntriesArgs)
 		reply := e.Reply.(*AppendEntriesReply)
 		if args.Seq <= rf.recvRpcLatestSeq[e.From] {
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", rf.me, args.LeaderId, args.Seq, rf.recvRpcLatestSeq[e.From])
+			rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", rf.me, args.LeaderId, args.Seq, rf.recvRpcLatestSeq[e.From])
 			reply.Abort = true
 			return nil
 		}
@@ -99,12 +99,12 @@ func (rf *Raft) Step(e Event) error {
 
 		switch {
 		case args.Term < rf.currentTerm:
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v currentTerm %v > term %v, ignore lower term", rf.me, args.LeaderId, rf.currentTerm, args.Term)
+			rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v currentTerm %v > term %v, ignore lower term", rf.me, args.LeaderId, rf.currentTerm, args.Term)
 			reply.Term = rf.currentTerm
 			reply.Success = false
 		case args.Term >= rf.currentTerm:
 			if rf.state != StateFollower {
-				DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately", rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
+				rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately", rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
 				rf.becomeFollower(args.Term, args.LeaderId)
 			}
 			// consistency check：prevLogIndex所在的log entry，它的term不等于prevLogTerm。
@@ -118,7 +118,7 @@ func (rf *Raft) Step(e Event) error {
 					passCheck = false
 					// 注意，conflict index应该为最后的index + 1，因为在下一次RPC需要计算PrevLogIndex=nextIndex-1
 					reply.ConflictIndex = lastLogIndex + 1
-					DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for lastLogIndex. %v < %v, conflictIndex:%v", rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex, reply.ConflictIndex)
+					rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for lastLogIndex. %v < %v, conflictIndex:%v", rf.me, args.LeaderId, lastLogIndex, args.PrevLogIndex, reply.ConflictIndex)
 					break
 				}
 
@@ -127,7 +127,7 @@ func (rf *Raft) Step(e Event) error {
 				if args.PrevLogIndex < firstLogIndex {
 					passCheck = false
 					reply.ConflictIndex = firstLogIndex + 1
-					DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for firstLogIndex. %v > %v, conflictIndex:%v", rf.me, args.LeaderId, firstLogIndex, args.PrevLogIndex, reply.ConflictIndex)
+					rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for firstLogIndex. %v > %v, conflictIndex:%v", rf.me, args.LeaderId, firstLogIndex, args.PrevLogIndex, reply.ConflictIndex)
 					break
 				}
 
@@ -139,7 +139,7 @@ func (rf *Raft) Step(e Event) error {
 				if matchedIndexLogTerm != args.PrevLogTerm {
 					passCheck = false
 					reply.ConflictIndex = rf.getFirstIndexOfTerm(matchedIndexLogTerm)
-					DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for term. %v != %v, conflictIndex:%v", rf.me, args.LeaderId, matchedIndexLogTerm, args.PrevLogTerm, reply.ConflictIndex)
+					rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v<-%v fail consistency for term. %v != %v, conflictIndex:%v", rf.me, args.LeaderId, matchedIndexLogTerm, args.PrevLogTerm, reply.ConflictIndex)
 					break
 				}
 			}
@@ -183,9 +183,9 @@ func (rf *Raft) Step(e Event) error {
 	case EventSnap:
 		args := e.Args.(*InstallSnapshotArgs)
 		reply := e.Reply.(*InstallSnapshotReply)
-		DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v receiveEventSnap args:%v", rf.me, args.LeaderId, args)
+		rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v receiveEventSnap args:%v", rf.me, args.LeaderId, args)
 		if args.Seq <= rf.recvRpcLatestSeq[e.From] {
-			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", rf.me, args.LeaderId, args.Seq, rf.recvRpcLatestSeq[e.From])
+			rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", rf.me, args.LeaderId, args.Seq, rf.recvRpcLatestSeq[e.From])
 			reply.Abort = true
 			return nil
 		}
@@ -193,12 +193,12 @@ func (rf *Raft) Step(e Event) error {
 
 		switch {
 		case args.Term < rf.currentTerm:
-			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v currentTerm %v > term %v, ignore lower term", rf.me, args.LeaderId, rf.currentTerm, args.Term)
+			rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v currentTerm %v > term %v, ignore lower term", rf.me, args.LeaderId, rf.currentTerm, args.Term)
 			reply.Term = rf.currentTerm
 			reply.Success = false
 		case args.Term >= rf.currentTerm:
 			if rf.state != StateFollower {
-				DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately", rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
+				rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v<-%v %s currentTerm %v got higher term %v, so revert to follower immediately", rf.me, args.LeaderId, rf.state, rf.currentTerm, args.Term)
 				rf.becomeFollower(args.Term, args.LeaderId)
 			}
 			// 这里不需要consistency check，因为一致性检测的结果是为了计算conflictIndex，让leader快速设置nextIndex，继续下一层appendEntries RPC
@@ -230,7 +230,7 @@ func stepFollower(rf *Raft, e Event) error {
 		rf.becomePreCandidate()
 		rf.send(e)
 	default:
-		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for %v", e, rf.state))
+		rf.DPrintf(rf.me, fmt.Sprintf("ignore event:%v for %v", e, rf.state))
 	}
 	return nil
 }
@@ -243,18 +243,18 @@ func stepPreCandidate(rf *Raft, e Event) error {
 		args := e.Args.(*RequestVoteArgs)
 		reply := e.Reply.(*RequestVoteReply)
 		if args.Seq != rf.sendRpcLatestSeq[e.From].SendSeq {
-			DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
 			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
 
 		if reply == nil {
-			DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
 			return nil
 		}
 		if reply.Term > rf.currentTerm {
-			DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
 			rf.becomeFollower(reply.Term, None)
 			return nil
 		}
@@ -263,13 +263,13 @@ func stepPreCandidate(rf *Raft, e Event) error {
 		}
 		// got majority votes
 		if len(rf.voteFrom) >= len(rf.peers)/2+1 {
-			DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v voteFrom %+v", e.From, e.To, rf.voteFrom)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v voteFrom %+v", e.From, e.To, rf.voteFrom)
 			rf.becomeCandidate()
 			rf.send(Event{Type: EventHup, From: rf.me, To: rf.me, Term: rf.currentTerm})
 			return nil
 		}
 	default:
-		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
+		rf.DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
 	}
 	return nil
 }
@@ -282,18 +282,18 @@ func stepCandidate(rf *Raft, e Event) error {
 		args := e.Args.(*RequestVoteArgs)
 		reply := e.Reply.(*RequestVoteReply)
 		if args.Seq != rf.sendRpcLatestSeq[e.From].SendSeq {
-			DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
 			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
 
 		if reply == nil {
-			DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
 			return nil
 		}
 		if reply.Term > rf.currentTerm {
-			DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
 			rf.becomeFollower(reply.Term, None)
 			return nil
 		}
@@ -302,7 +302,7 @@ func stepCandidate(rf *Raft, e Event) error {
 		}
 		// got majority votes
 		if len(rf.voteFrom) >= len(rf.peers)/2+1 {
-			DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v voteFrom %+v", e.From, e.To, rf.voteFrom)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v voteFrom %+v", e.From, e.To, rf.voteFrom)
 			rf.becomeLeader()
 			//rf.log = append(rf.log, LogEntry{
 			//	Command: "NoOp",
@@ -315,7 +315,7 @@ func stepCandidate(rf *Raft, e Event) error {
 		// split vote的情况处理逻辑，发生在electionTimeout里，避免这里还需要计数requestedVoteCount
 		// 同时我们基于event-driven后，channel是顺序取event，就出现了requestedVoteCount已经=3了，但状态机还未收到event3
 	default:
-		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
+		rf.DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
 	}
 	return nil
 }
@@ -330,38 +330,38 @@ func stepLeader(rf *Raft, e Event) error {
 		args := e.Args.(*AppendEntriesArgs)
 		reply := e.Reply.(*AppendEntriesReply)
 		if args.Seq <= rf.sendRpcLatestSeq[e.From].RecvSeq {
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].RecvSeq)
+			rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v AbortOldRPC argsSeq:%v <= recvRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].RecvSeq)
 			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
 
 		if reply == nil {
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
+			rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
 			return nil
 		}
 		if reply.Term > rf.currentTerm {
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
+			rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
 			rf.becomeFollower(reply.Term, None)
 			return nil
 		}
 		if reply.Success {
 			if len(args.Entries) == 0 {
-				DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC success, entries len: %v, so heartbeat will do nothing", e.From, e.To, len(args.Entries))
+				rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC success, entries len: %v, so heartbeat will do nothing", e.From, e.To, len(args.Entries))
 			} else {
 				rf.setNextIndexAndMatchIndexDirectly(e.From, reply.NextIndex)
-				DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC success, entries len: %v, so had increased nextIndex %v, matchIndex %v", e.From, e.To, len(args.Entries), rf.nextIndex, rf.matchIndex)
+				rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC success, entries len: %v, so had increased nextIndex %v, matchIndex %v", e.From, e.To, len(args.Entries), rf.nextIndex, rf.matchIndex)
 			}
 		} else {
 			rf.nextIndex[e.From] = reply.ConflictIndex
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC false, so will decrease nextIndex and append again, %v", e.From, e.To, rf.nextIndex)
+			rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v gotRPC false, so will decrease nextIndex and append again, %v", e.From, e.To, rf.nextIndex)
 			return nil
 		}
 
 		// maybeCommit
 		calcCommitIndex := rf.calcCommitIndex()
 		if rf.commitIndex != calcCommitIndex {
-			DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v leader maybe commit, before:%v after calc commitIndex:%v, matchIndex: %v", e.From, e.To, rf.commitIndex, calcCommitIndex, rf.matchIndex)
+			rf.DRpcPrintf(rf.me, args.Seq, "AppendEntries %v->%v leader maybe commit, before:%v after calc commitIndex:%v, matchIndex: %v", e.From, e.To, rf.commitIndex, calcCommitIndex, rf.matchIndex)
 			rf.commitIndex = calcCommitIndex
 
 			// 真正的异步apply在 asyncApplier
@@ -371,30 +371,30 @@ func stepLeader(rf *Raft, e Event) error {
 		args := e.Args.(*InstallSnapshotArgs)
 		reply := e.Reply.(*InstallSnapshotReply)
 		if args.Seq != rf.sendRpcLatestSeq[e.From].SendSeq {
-			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
+			rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v AbortOldRPC argsSeq:%v != sendRpcLatestSeq:%v, ignore it", e.From, e.To, args.Seq, rf.sendRpcLatestSeq[e.From].SendSeq)
 			reply.Abort = true
 			return nil
 		}
 		rf.sendRpcLatestSeq[e.From].RecvSeq = args.Seq
 
 		if reply == nil {
-			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
+			rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v gotRPC nil, reply:%v", e.From, e.To, reply)
 			return nil
 		}
 		if reply.Term > rf.currentTerm {
-			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
+			rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v currentTerm %v got higher term %v, so revert to follower immediately", e.From, e.To, rf.currentTerm, reply.Term)
 			rf.becomeFollower(reply.Term, None)
 			return nil
 		}
 		if reply.Success {
 			rf.setNextIndexAndMatchIndexAfterSnapshot(e.From)
-			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v gotRPC success, so set nextIndex %v, matchIndex %v", e.From, e.To, rf.nextIndex, rf.matchIndex)
+			rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v gotRPC success, so set nextIndex %v, matchIndex %v", e.From, e.To, rf.nextIndex, rf.matchIndex)
 		} else {
-			DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v gotRPC false, so do nothing and install again, %v", e.From, e.To)
+			rf.DRpcPrintf(rf.me, args.Seq, "InstallSnapshot %v->%v gotRPC false, so do nothing and install again, %v", e.From, e.To)
 			return nil
 		}
 	default:
-		DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
+		rf.DPrintf(rf.me, fmt.Sprintf("ignore event:%v for raft:%v", e, rf.state))
 	}
 	return nil
 }
@@ -410,7 +410,7 @@ func (rf *Raft) becomeFollower(term int, lead int) {
 	rf.tick = rf.tickElection
 	rf.step = stepFollower
 	rf.lead = lead
-	DPrintf(rf.me, "Raft %v became follower at term %v", rf.me, rf.currentTerm)
+	rf.DPrintf(rf.me, "Raft %v became follower at term %v", rf.me, rf.currentTerm)
 	rf.persist()
 }
 
@@ -425,7 +425,7 @@ func (rf *Raft) becomePreCandidate() {
 	rf.voteFrom[rf.me] = struct{}{}
 	rf.tick = rf.tickElection
 	rf.step = stepPreCandidate
-	DPrintf(rf.me, "Raft %v became pre-candidate at term %v", rf.me, rf.currentTerm)
+	rf.DPrintf(rf.me, "Raft %v became pre-candidate at term %v", rf.me, rf.currentTerm)
 	rf.persist()
 }
 
@@ -439,7 +439,7 @@ func (rf *Raft) becomeCandidate() {
 	rf.voteFrom[rf.me] = struct{}{}
 	rf.tick = rf.tickElection
 	rf.step = stepCandidate
-	DPrintf(rf.me, "Raft %v became candidate at term %v", rf.me, rf.currentTerm)
+	rf.DPrintf(rf.me, "Raft %v became candidate at term %v", rf.me, rf.currentTerm)
 	rf.persist()
 }
 
@@ -460,7 +460,7 @@ func (rf *Raft) becomeLeader() {
 		rf.matchIndex[i] = 0
 	}
 
-	DPrintf(rf.me, "Raft %v became leader at term %v, "+
+	rf.DPrintf(rf.me, "Raft %v became leader at term %v, "+
 		"commitIndex:%v, lastApplied:%v, nextIndex:%v, matchIndex:%v, Last3Logs:%v",
 		rf.me, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex, debugLast3Logs(rf.log))
 	rf.persist()
@@ -472,10 +472,10 @@ func (rf *Raft) tickElection() {
 	rf.electionElapsed++
 
 	if rf.electionElapsed >= rf.randomizedElectionTimeout {
-		DPrintf(rf.me, "tick election timeout !")
+		rf.DPrintf(rf.me, "tick election timeout !")
 
 		if rf.state == StateCandidate || rf.state == StatePreCandidate {
-			DPrintf(rf.me, "%s %v start election again, may encounter split vote at term %v !", rf.state, rf.me, rf.currentTerm)
+			rf.DPrintf(rf.me, "%s %v start election again, may encounter split vote at term %v !", rf.state, rf.me, rf.currentTerm)
 			rf.becomeFollower(rf.currentTerm, None)
 		}
 
@@ -495,7 +495,7 @@ func (rf *Raft) tickHeartbeat() {
 	}
 
 	if rf.heartbeatElapsed >= rf.heartbeatTimeout {
-		DPrintf(rf.me, "tick heartbeat timeout !")
+		rf.DPrintf(rf.me, "tick heartbeat timeout !")
 		rf.heartbeatElapsed = 0
 		rf.send(Event{Type: EventBeat, From: rf.me, Term: rf.currentTerm})
 	}

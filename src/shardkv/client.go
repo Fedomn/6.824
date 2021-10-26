@@ -117,7 +117,7 @@ func (ck *Clerk) Command(args *CmdOpArgs) string {
 				} else {
 					newLeaderId = (newLeaderId + 1) % int64(len(servers))
 					if newLeaderId == oldLeaderId {
-						CDPrintf(ck.clientId, "ShardKVClient may encounter configChanged, need refreshChange", reply.Status)
+						CDPrintf(ck.clientId, "ShardKVClient may encounter configChanged, need refreshChange")
 						break
 					}
 					continue

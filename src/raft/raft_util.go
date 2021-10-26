@@ -6,7 +6,7 @@ func (rf *Raft) getLogEntryIndex(logIndex int) int {
 	firstIndex := rf.getFirstLogEntry().Index
 	lastIndex := rf.getLastLogEntry().Index
 	if logIndex < firstIndex {
-		DPrintf(rf.me, "GetPrevIndexAfterSnapshot getIndex:%v afterSnapshotFirstIndex:%v", logIndex, firstIndex)
+		rf.DPrintf(rf.me, "GetPrevIndexAfterSnapshot getIndex:%v afterSnapshotFirstIndex:%v", logIndex, firstIndex)
 		return 0
 	}
 	if logIndex > lastIndex {
@@ -71,12 +71,12 @@ func (rf *Raft) getFirstIndexOfTerm(foundTerm int) int {
 	for i := 0; i < len(rf.log)-1; i++ {
 		logEntry := rf.log[i]
 		if logEntry.Term == foundTerm {
-			//DPrintf(rf.me, "foundTerm:%v, returnIndex:%v", foundTerm, logEntry.Index)
+			//rf.DPrintf(rf.me, "foundTerm:%v, returnIndex:%v", foundTerm, logEntry.Index)
 			return logEntry.Index
 		}
 	}
 	firstIndex := rf.getFirstLogEntry().Index
-	DPrintf(rf.me, "not found first index of term %v, so return firstIndex+1=%v", foundTerm, firstIndex+1)
+	rf.DPrintf(rf.me, "not found first index of term %v, so return firstIndex+1=%v", foundTerm, firstIndex+1)
 	return firstIndex + 1
 }
 

@@ -77,9 +77,9 @@ func (ck *Clerk) command(args *CommandArgs) Config {
 		ok := ck.servers[ck.leaderId].Call("ShardCtrler.Command", args.clone(), reply)
 		if !ok || reply.Status != OK {
 			ck.leaderId = (ck.leaderId + 1) % int64(len(ck.servers))
-			if ok {
-				CDPrintf(ck.clientId, "ShardCtrlerClient gotErrReply:%s", reply.Status)
-			}
+			//if ok {
+			//	CDPrintf(ck.clientId, "ShardCtrlerClient gotErrReply:%s", reply.Status)
+			//}
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}

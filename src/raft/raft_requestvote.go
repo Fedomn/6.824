@@ -16,14 +16,14 @@ func (rf *Raft) startRequestVote() {
 		}
 		reply := &RequestVoteReply{}
 		go func() {
-			DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v sendRPC %+v", rf.me, peerIdx, args)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v sendRPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestVote", args, reply); !ok {
 				if !rf.killed() {
-					TRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
+					rf.TRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v RPC not reply", rf.me, peerIdx)
 				}
 			} else {
 				if reply.Abort {
-					TRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v abortReply", rf.me, peerIdx)
+					rf.TRpcPrintf(rf.me, args.Seq, "RequestVote %v->%v abortReply", rf.me, peerIdx)
 					return
 				}
 				rf.send(Event{Type: EventVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})
@@ -50,14 +50,14 @@ func (rf *Raft) startPreRequestVote() {
 		}
 		reply := &RequestVoteReply{}
 		go func() {
-			DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v sendRPC %+v", rf.me, peerIdx, args)
+			rf.DRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v sendRPC %+v", rf.me, peerIdx, args)
 			if ok := rf.peers[peerIdx].Call("Raft.RequestPreVote", args, reply); !ok {
 				if !rf.killed() {
-					TRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v RPC not reply", rf.me, peerIdx)
+					rf.TRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v RPC not reply", rf.me, peerIdx)
 				}
 			} else {
 				if reply.Abort {
-					TRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v abortReply", rf.me, peerIdx)
+					rf.TRpcPrintf(rf.me, args.Seq, "RequestPreVote %v->%v abortReply", rf.me, peerIdx)
 					return
 				}
 				rf.send(Event{Type: EventPreVoteResp, From: peerIdx, To: rf.me, Term: args.Term, Args: args, Reply: reply})

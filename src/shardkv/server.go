@@ -5,6 +5,7 @@ import (
 	"6.824/labrpc"
 	"6.824/raft"
 	"6.824/shardctrler"
+	"log"
 	"sync"
 	"time"
 )
@@ -29,12 +30,14 @@ type ShardKV struct {
 
 	lastConfig    shardctrler.Config
 	currentConfig shardctrler.Config
+
+	gLog *log.Logger
 }
 
 func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdReply) {
 	kv.mu.RLock()
 	if kv.isOutdatedCommand(args.ClientId, args.SequenceNum) {
-		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
 		reply.Status = ErrOutdated
 		kv.mu.RUnlock()
 		return
@@ -42,12 +45,12 @@ func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdReply) {
 	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
 		reply.Status = lastReply.Status
 		reply.Response = lastReply.Response
-		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
 		kv.mu.RUnlock()
 		return
 	}
 	if !kv.canServe(key2shard(args.Key)) {
-		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] canServeKey:%s", args.ClientId, args.SequenceNum, args.Key)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] canServeKey:%s", args.ClientId, args.SequenceNum, args.Key)
 		reply.Status = ErrWrongGroup
 		kv.mu.RUnlock()
 		return
@@ -64,7 +67,7 @@ func (kv *ShardKV) StartCmdAndWait(cmd Command, reply *CmdReply) {
 		reply.LeaderHint = kv.rf.GetLeader()
 		return
 	}
-	DPrintf(kv.gid, kv.me, "ShardKVServer Leader startCommand <%d,%d> <%s:%s>", term, index, cmd.CmdType, cmd.CmdArgs)
+	kv.DPrintf(kv.gid, kv.me, "ShardKVServer Leader startCommand <%d,%d> <%s:%s>", term, index, cmd.CmdType, cmd.CmdArgs)
 
 	kv.mu.Lock()
 	kv.buildNotifyCh(index)
@@ -75,17 +78,17 @@ func (kv *ShardKV) StartCmdAndWait(cmd Command, reply *CmdReply) {
 	case res := <-ch:
 		reply.Status = res.Status
 		reply.Response = res.Response
-		DPrintf(kv.gid, kv.me, "ShardKVServer reply <%s:%s>", cmd.CmdType, reply)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer reply <%s:%s>", cmd.CmdType, reply)
 	case <-time.After(ExecuteTimeout):
 		reply.Status = ErrTimeout
 		reply.LeaderHint = kv.rf.GetLeader()
-		DPrintf(kv.gid, kv.me, "ShardKVServer timeout <%s>", cmd.CmdType)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer timeout <%s>", cmd.CmdType)
 	}
 
 	go kv.releaseNotifyCh(index)
 }
 
-func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd, testNum string) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Command{})
@@ -95,9 +98,10 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(ShardsOpReply{})
 
 	applyCh := make(chan raft.ApplyMsg)
+	glog := initGlog(testNum, gid)
 	kv := &ShardKV{
 		me:           me,
-		rf:           raft.StartNode(servers, me, persister, applyCh),
+		rf:           raft.StartNode(servers, me, persister, applyCh, glog),
 		rfPersister:  persister,
 		applyCh:      applyCh,
 		make_end:     make_end,
@@ -107,6 +111,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		dead:         0,
 		sc:           shardctrler.MakeClerk(ctrlers),
 		notifyCh:     make(map[int]chan CmdReply),
+		gLog:         glog,
 	}
 	kv.installSnapshot(kv.rfPersister.ReadSnapshot())
 
@@ -116,7 +121,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	go kv.monitorGC()
 	go kv.monitorNeedNoop()
 
-	DPrintf(kv.gid, kv.me, "ShardKVServer init success shardStore:%v", kv.shardStore)
+	kv.DPrintf(kv.gid, kv.me, "ShardKVServer init success shardStore:%v", kv.shardStore)
 
 	return kv
 }

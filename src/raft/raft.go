@@ -3,6 +3,7 @@ package raft
 import (
 	"6.824/labrpc"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -83,6 +84,8 @@ type Raft struct {
 	replicatorTrigger chan struct{}
 
 	asyncSnapshotCh chan ApplyMsg
+
+	gLog *log.Logger
 }
 
 type RpcSeqStatus struct {
@@ -141,7 +144,7 @@ func (rf *Raft) replicator() {
 			rf.mu.Unlock()
 			if isLeader {
 				rf.mu.Lock()
-				DPrintf(rf.me, "Leader proposeT immediately")
+				rf.DPrintf(rf.me, "Leader proposeT immediately")
 				rf.heartbeatElapsed = 0
 				rf.mu.Unlock()
 				rf.send(e)
@@ -181,7 +184,7 @@ func (rf *Raft) asyncApplier() {
 		commitIndex := rf.commitIndex
 		deltaCount := commitIndex - rf.lastApplied
 		needAppliedEntries := rf.getEntries(rf.lastApplied+1, commitIndex)
-		DPrintf(rf.me, "%s will apply %v - %v = delta %v, entries:%v", rf.state, commitIndex, rf.lastApplied, deltaCount, debugLast3Logs(needAppliedEntries))
+		rf.DPrintf(rf.me, "%s will apply %v - %v = delta %v, entries:%v", rf.state, commitIndex, rf.lastApplied, deltaCount, debugLast3Logs(needAppliedEntries))
 		rf.mu.Unlock()
 		for _, entry := range needAppliedEntries {
 			rf.applyCh <- ApplyMsg{
@@ -220,7 +223,7 @@ func (rf *Raft) initStates(peersNum int, persister *Persister) {
 		rf.log = append(rf.log, LogEntry{nil, 0, 0})
 	} else {
 		rf.readPersist(raftState)
-		DPrintf(rf.me, "Raft already recover")
+		rf.DPrintf(rf.me, "Raft already recover")
 	}
 
 	firstLog := rf.log[0]
@@ -238,7 +241,7 @@ func (rf *Raft) initStates(peersNum int, persister *Persister) {
 	}
 	rf.replicatorTrigger = make(chan struct{}, 100)
 
-	DPrintf(rf.me, "Raft init success, Last3Logs:%v commitIndex:%v lastApplied:%v nextIndex:%v sendRpcLatestSeq:%v recvRpcLatestSeq:%v",
+	rf.DPrintf(rf.me, "Raft init success, Last3Logs:%v commitIndex:%v lastApplied:%v nextIndex:%v sendRpcLatestSeq:%v recvRpcLatestSeq:%v",
 		debugLast3Logs(rf.log), rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.sendRpcLatestSeq, rf.recvRpcLatestSeq)
 }
 
@@ -252,8 +255,8 @@ func (rf *Raft) initInternalUsed() {
 	rf.killCh = make(chan struct{})
 }
 
-func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg, eventCh chan Event) *Raft {
-	rf := &Raft{}
+func newRaft(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg, eventCh chan Event, glog *log.Logger) *Raft {
+	rf := &Raft{gLog: initGlog(glog)}
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me

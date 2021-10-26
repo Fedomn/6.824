@@ -7,11 +7,15 @@ import (
 	"os"
 )
 
-var gLog *log.Logger
-
 func init() {
-	gLog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 	color.NoColor = false
+}
+
+func initGlog(glog *log.Logger) *log.Logger {
+	if glog == nil {
+		return log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	}
+	return glog
 }
 
 var colorMap = map[int]func(format string, a ...interface{}) string{
@@ -33,36 +37,33 @@ var colorMap = map[int]func(format string, a ...interface{}) string{
 }
 
 // Debugging
-const Debug = false
+const Debug = true
 const Trace = false
 
-func DPrintf(rfme int, format string, a ...interface{}) {
+func (rf *Raft) SetGlog(glog *log.Logger) {
+	rf.gLog = glog
+}
+
+func (rf *Raft) DPrintf(rfme int, format string, a ...interface{}) {
 	if Debug {
 		prefix := fmt.Sprintf("[%d] ", rfme)
-		gLog.Println(colorMap[rfme](prefix+format, a...))
+		rf.gLog.Println(colorMap[rfme](prefix+format, a...))
 	}
 	return
 }
 
-func DRpcPrintf(rfme int, seq uint32, format string, a ...interface{}) {
+func (rf *Raft) DRpcPrintf(rfme int, seq uint32, format string, a ...interface{}) {
 	if Debug {
 		prefix := fmt.Sprintf("[%d] [Seq%d] ", rfme, seq)
-		gLog.Println(colorMap[rfme](prefix+format, a...))
+		rf.gLog.Println(colorMap[rfme](prefix+format, a...))
 	}
 	return
 }
 
-func TPrintf(rfme int, format string, a ...interface{}) {
-	if Trace {
-		prefix := fmt.Sprintf("[%d] ", rfme)
-		gLog.Println(colorMap[rfme](prefix+format, a...))
-	}
-}
-
-func TRpcPrintf(rfme int, seq uint32, format string, a ...interface{}) {
+func (rf *Raft) TRpcPrintf(rfme int, seq uint32, format string, a ...interface{}) {
 	if Trace {
 		prefix := fmt.Sprintf("[%d] [Seq%d] ", rfme, seq)
-		gLog.Println(colorMap[rfme](prefix+format, a...))
+		rf.gLog.Println(colorMap[rfme](prefix+format, a...))
 	}
 }
 
