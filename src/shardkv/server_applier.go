@@ -86,15 +86,15 @@ func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
 		return CmdReply{Status: ErrOutdated}
 	}
 
-	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {
+	isGetOp := op.OpType == CmdOpGet
+	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated && isGetOp {
 		DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
 		return lastReply
 	} else {
 		reply := kv.applyToStore(op, shardId)
-		if op.OpType == CmdOpPut {
-			DPrintf(kv.gid, kv.me, "ShardKVServerApplier CmdOpPut:%s, KVStore:%v", op, kv.shardStore)
+		if !isGetOp {
+			kv.setSession(op.ClientId, op.SequenceNum, reply)
 		}
-		kv.setSession(op.ClientId, op.SequenceNum, reply)
 		return reply
 	}
 }
@@ -132,7 +132,7 @@ func (kv *ShardKV) updateShardStatus(latestConfig shardctrler.Config) {
 // CmdInsertShards
 func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
 	if reply.ConfigNum == kv.currentConfig.Num {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, before:%v", kv.shardStore)
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards, before:%v, replyShards:%v", kv.shardStore, reply.Shards)
 		for shardId, shardData := range reply.Shards {
 			shard := kv.shardStore[shardId]
 			// 自己的kv.monitorPull中发出command，标志 从其它gid的leader pull的reply返回了
@@ -141,7 +141,10 @@ func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
 					shard.KV[key] = value
 				}
 				// 标志gc：leader已经拉取到了，告诉对方leader可以gc了
-				shard.Status = ShardGCing
+				shard.Status = ShardNotifyPeerGidGC
+			} else {
+				DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyInsertShards gotDuplicatedReply ignore")
+				break
 			}
 		}
 		for clientId, operation := range reply.LastOperations {
@@ -159,13 +162,17 @@ func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
 // CmdDeleteShards
 func (kv *ShardKV) applyDeleteShards(args ShardsOpArgs) CmdReply {
 	if args.ConfigNum == kv.currentConfig.Num {
-		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, before:%v", kv.shardStore)
+		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, before:%v, argsShards:%v", kv.shardStore, args.ShardIDs)
 		for _, shardId := range args.ShardIDs {
 			shard := kv.shardStore[shardId]
-			if shard.Status == ShardGCing { // 自己Pull完成的leader的 kv.monitorGC中发出command，标志 已经通知对方gid的leader gc了，因此需要在设置回Serving
+			if shard.Status == ShardNotifyPeerGidGC { // pull完成后，在monitorGC中发出command，告诉自己 已经通知对方gid的leader gc成功了，因此需要再设置回Serving
 				shard.Status = ShardServing
-			} else if shard.Status == ShardBePulling { // updateShardStatus中设置的，标志这个shard 将来不属于当前leader，正在提供给其它gid-leader读取
+			} else if shard.Status == ShardBePulling { // 对方gid的monitorGC中发出的 DeleteShardsData RPC 触发的command，即通知我已经pull完了，可以将它清空了
 				kv.shardStore[shardId] = NewShard()
+				shard.Status = ShardNotServing
+			} else {
+				DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards gotDuplicatedReply ignore")
+				break
 			}
 		}
 		DPrintf(kv.gid, kv.me, "ShardKVServerApplier applyDeleteShards, after:%v", kv.shardStore)

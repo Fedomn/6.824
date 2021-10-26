@@ -9,12 +9,14 @@ type ShardStatus uint8
 const (
 	// 正常服务
 	ShardServing ShardStatus = iota
-	// 将要从 别的server pull该shard
+	// 将要从 别的server pull该shard -> 更新为ShardNotifyPeerGidGC
 	ShardPulling
-	// 提供给 其它server pull该shard
+	// 提供给 其它server pull该shard -> 更新为ShardNotServing
 	ShardBePulling
-	// 提供完了 需要gc数据
-	ShardGCing
+	// pull完了 需要对方gid gc数据 -> 更新为ShardServing
+	ShardNotifyPeerGidGC
+	// bePulling完了 标志这个shard不在提供服务
+	ShardNotServing
 )
 
 func (status ShardStatus) String() string {
@@ -25,8 +27,10 @@ func (status ShardStatus) String() string {
 		return "ShardPulling"
 	case ShardBePulling:
 		return "ShardBePulling"
-	case ShardGCing:
-		return "ShardGCing"
+	case ShardNotifyPeerGidGC:
+		return "ShardNotifyPeerGidGC"
+	case ShardNotServing:
+		return "ShardNotServing"
 	}
 	panic(fmt.Sprintf("unexpected ShardStatus %d", status))
 }
@@ -86,7 +90,8 @@ func (kv *ShardKV) applyToStore(op CmdOpArgs, shardId int) CmdReply {
 
 func (kv *ShardKV) canServe(shardID int) bool {
 	return kv.currentConfig.Shards[shardID] == kv.gid &&
-		(kv.shardStore[shardID].Status == ShardServing || kv.shardStore[shardID].Status == ShardGCing)
+		// 要么是serving 要么是已经pull完了在通知对方peerGID gc
+		(kv.shardStore[shardID].Status == ShardServing || kv.shardStore[shardID].Status == ShardNotifyPeerGidGC)
 }
 
 func (kv *ShardKV) GetShardsData(args *ShardsOpArgs, reply *ShardsOpReply) {
@@ -97,7 +102,8 @@ func (kv *ShardKV) GetShardsData(args *ShardsOpArgs, reply *ShardsOpReply) {
 	kv.mu.RLock()
 	defer kv.mu.RUnlock()
 
-	DPrintf(kv.gid, kv.me, "processGetShardsData args:%v", args)
+	DPrintf(kv.gid, kv.me, "GetShardsData process args:%v", args)
+	// 请求来的configNum比我大，说明我还未更新成最新的config，无法对外提供shard data
 	if kv.currentConfig.Num < args.ConfigNum {
 		reply.Status = ErrNotReady
 		return
@@ -122,12 +128,12 @@ func (kv *ShardKV) DeleteShardsData(args *ShardsOpArgs, reply *ShardsOpReply) {
 		reply.Status = ErrWrongLeader
 		return
 	}
-	kv.mu.RLock()
+	DPrintf(kv.gid, kv.me, "DeleteShardsData process args:%v", args)
 
-	DPrintf(kv.gid, kv.me, "processDeleteShardsData args:%v", args)
+	kv.mu.RLock()
 	if kv.currentConfig.Num > args.ConfigNum {
 		reply.Status = OK
-		DPrintf(kv.gid, kv.me, "processDeleteShardsData alreadyProcess args:%v", args)
+		DPrintf(kv.gid, kv.me, "DeleteShardsData alreadyProcess args:%v", args)
 		kv.mu.RUnlock()
 		return
 	}

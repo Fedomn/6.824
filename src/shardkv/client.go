@@ -102,27 +102,30 @@ func (ck *Clerk) Command(args *CmdOpArgs) string {
 	for {
 		shard := key2shard(args.Key)
 		gid := ck.config.Shards[shard]
-		if servers, existGID := ck.config.Groups[gid]; existGID {
-			leaderId := ck.leaderIds[gid]
-			reply := &CmdReply{}
-			ok := ck.make_end(servers[leaderId]).Call("ShardKV.Command", args.clone(), reply)
-			switch {
-			case ok && reply.Status == OK:
-				ck.sequenceNum++
-				return reply.Response
-			case ok && reply.Status == ErrWrongGroup:
-				goto refreshCfg
-			default:
-				if ok {
-					CDPrintf(ck.clientId, "ShardKVClient gotErrReply:%s", reply.Status)
+		servers, gidHasServers := ck.config.Groups[gid]
+		if gidHasServers {
+			oldLeaderId := ck.leaderIds[gid]
+			newLeaderId := oldLeaderId
+			for {
+				reply := &CmdReply{}
+				ok := ck.make_end(servers[newLeaderId]).Call("ShardKV.Command", args.clone(), reply)
+				if ok && reply.Status == OK {
+					ck.sequenceNum++
+					return reply.Response
+				} else if ok && reply.Status == ErrWrongGroup {
+					break
+				} else {
+					newLeaderId = (newLeaderId + 1) % int64(len(servers))
+					if newLeaderId == oldLeaderId {
+						CDPrintf(ck.clientId, "ShardKVClient may encounter configChanged, need refreshChange", reply.Status)
+						break
+					}
+					continue
 				}
-				ck.leaderIds[gid] = (ck.leaderIds[gid] + 1) % int64(len(servers))
-				continue
 			}
 		}
-	refreshCfg:
 		time.Sleep(100 * time.Millisecond)
 		ck.config = ck.sm.Query(-1)
-		CDPrintf(ck.clientId, "ShardKVClient refreshCfg:%v", ck.config)
+		CDPrintf(ck.clientId, "ShardKVClient refreshConfig:%v", ck.config)
 	}
 }

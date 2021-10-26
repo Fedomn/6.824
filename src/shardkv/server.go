@@ -46,8 +46,14 @@ func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdReply) {
 		kv.mu.RUnlock()
 		return
 	}
-	kv.mu.RUnlock()
+	if !kv.canServe(key2shard(args.Key)) {
+		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] canServeKey:%s", args.ClientId, args.SequenceNum, args.Key)
+		reply.Status = ErrWrongGroup
+		kv.mu.RUnlock()
+		return
+	}
 
+	kv.mu.RUnlock()
 	kv.StartCmdAndWait(Command{CmdOp, *args}, reply)
 }
 
@@ -58,12 +64,7 @@ func (kv *ShardKV) StartCmdAndWait(cmd Command, reply *CmdReply) {
 		reply.LeaderHint = kv.rf.GetLeader()
 		return
 	}
-	if cmd.CmdType == CmdOp {
-		args := cmd.CmdArgs.(CmdOpArgs)
-		DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] Leader start%sCommand <%d,%d> args:%s", args.ClientId, args.SequenceNum, cmd.CmdType, term, index, args)
-	} else {
-		DPrintf(kv.gid, kv.me, "ShardKVServer Leader start%sCommand <%d,%d> args:%s", cmd.CmdType, term, index, cmd.CmdArgs)
-	}
+	DPrintf(kv.gid, kv.me, "ShardKVServer Leader startCommand <%d,%d> <%s:%s>", term, index, cmd.CmdType, cmd.CmdArgs)
 
 	kv.mu.Lock()
 	kv.buildNotifyCh(index)
@@ -74,21 +75,11 @@ func (kv *ShardKV) StartCmdAndWait(cmd Command, reply *CmdReply) {
 	case res := <-ch:
 		reply.Status = res.Status
 		reply.Response = res.Response
-		if cmd.CmdType == CmdOp {
-			args := cmd.CmdArgs.(CmdOpArgs)
-			DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] reply%s:%s", args.ClientId, args.SequenceNum, cmd.CmdType, reply)
-		} else {
-			DPrintf(kv.gid, kv.me, "ShardKVServer reply%s:%s", cmd.CmdType, reply)
-		}
+		DPrintf(kv.gid, kv.me, "ShardKVServer reply <%s:%s>", cmd.CmdType, reply)
 	case <-time.After(ExecuteTimeout):
 		reply.Status = ErrTimeout
 		reply.LeaderHint = kv.rf.GetLeader()
-		if cmd.CmdType == CmdOp {
-			args := cmd.CmdArgs.(CmdOpArgs)
-			DPrintf(kv.gid, kv.me, "ShardKVServer->[%d:%d] timeout%s", args.ClientId, args.SequenceNum, cmd.CmdType)
-		} else {
-			DPrintf(kv.gid, kv.me, "ShardKVServer timeout%s", cmd.CmdType)
-		}
+		DPrintf(kv.gid, kv.me, "ShardKVServer timeout <%s>", cmd.CmdType)
 	}
 
 	go kv.releaseNotifyCh(index)
