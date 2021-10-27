@@ -142,8 +142,10 @@ func (kv *ShardKV) applyInsertShards(reply ShardsOpReply) CmdReply {
 				break
 			}
 		}
+		// 潜在bug: pull发生在前，落后的command在后，导致pull完成后，状态已经更新了，但command又重新apply了duplicate的数据
+		// 为了防止这种情况：在每次pull完后，都要更新kv.sessions来记录，当前client已经apply的最大index，用来在applyOp阶段判断duplicate
 		for clientId, operation := range reply.LastOperations {
-			if _, ok := kv.sessions[clientId]; !ok {
+			if lastOperation, ok := kv.sessions[clientId]; !ok || lastOperation.SequenceNum < operation.SequenceNum {
 				kv.sessions[clientId] = operation
 			}
 		}

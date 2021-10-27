@@ -2,6 +2,7 @@ package shardkv
 
 import (
 	"6.824/shardctrler"
+	"sync"
 	"time"
 )
 
@@ -33,23 +34,28 @@ func (kv *ShardKV) monitorConfiguration() {
 	}
 }
 
+// 潜在bug: pull发生在前，落后的command在后，导致pull完成后，shardStore状态已经更新了，但command又重新apply了duplicate的数据
 func (kv *ShardKV) monitorPull() {
 	for !kv.killed() {
 		if _, isLeader := kv.rf.GetState(); isLeader {
 			kv.mu.RLock()
 			gid2shardIDs := kv.getShardIDsByStatus(ShardPulling)
+			var wg sync.WaitGroup // 减少重复pull RPC的次数
 			currentConfigNum := kv.currentConfig.Num
 			lastConfig := kv.lastConfig
 			kv.mu.RUnlock()
 
 			for gid, shardIDs := range gid2shardIDs {
 				kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorPull StartPullShards from gid:%d, shardIDs:%v", gid, shardIDs)
+				wg.Add(1)
 				_gid := gid
 				_shardIDs := shardIDs
 				go func() {
+					defer wg.Done()
 					kv.pullShardData(lastConfig, currentConfigNum, _gid, _shardIDs)
 				}()
 			}
+			wg.Wait()
 		}
 		time.Sleep(MonitorPullTimeout)
 	}
