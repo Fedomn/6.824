@@ -5,22 +5,9 @@ import (
 	"sync/atomic"
 )
 
-func (kv *ShardKV) isOutdatedCommand(clientId, sequenceNum int64) bool {
+func (kv *ShardKV) isDuplicated(clientId, sequenceNum int64) bool {
 	lastOperation, ok := kv.sessions[clientId]
-	if ok {
-		return lastOperation.SequenceNum > sequenceNum
-	} else {
-		return false
-	}
-}
-
-func (kv *ShardKV) getDuplicatedCommandReply(clientId, sequenceNum int64) (bool, CmdReply) {
-	lastOperation, ok := kv.sessions[clientId]
-	if ok {
-		return lastOperation.SequenceNum == sequenceNum, lastOperation.Reply
-	} else {
-		return false, CmdReply{}
-	}
+	return ok && sequenceNum <= lastOperation.SequenceNum
 }
 
 // KVServer可能未收到client的RPC，而是由raft同步过来的command

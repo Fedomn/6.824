@@ -115,8 +115,8 @@ type CmdReply struct {
 }
 
 func (cr *CmdReply) String() string {
-	if len(cr.Response) > 5 {
-		return fmt.Sprintf("%s ...%s", cr.Status, cr.Response[len(cr.Response)-5:])
+	if len(cr.Response) > 10 {
+		return fmt.Sprintf("%s ...%s", cr.Status, cr.Response[len(cr.Response)-10:])
 	} else {
 		return fmt.Sprintf("%s %s", cr.Status, cr.Response)
 	}

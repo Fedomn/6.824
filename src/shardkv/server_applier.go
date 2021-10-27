@@ -45,7 +45,8 @@ func (kv *ShardKV) applier() {
 						if ch, ok := kv.notifyCh[msg.CommandIndex]; ok {
 							ch <- reply
 						} else {
-							kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsgTimeout index:%d", msg.CommandIndex)
+							// 这里是 raft recover后，没有通过client，而是raft直接内部apply的情况
+							kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotApplyMsg from Raft index:%d", msg.CommandIndex)
 						}
 					} else {
 						kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier lostLeadership")
@@ -80,16 +81,10 @@ func (kv *ShardKV) applyOp(op CmdOpArgs) CmdReply {
 		return CmdReply{Status: ErrWrongGroup}
 	}
 
-	if kv.isOutdatedCommand(op.ClientId, op.SequenceNum) {
-		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
-		kv.mu.RUnlock()
-		return CmdReply{Status: ErrOutdated}
-	}
-
 	isGetOp := op.OpType == CmdOpGet
-	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated && isGetOp {
-		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
-		return lastReply
+	if !isGetOp && kv.isDuplicated(op.ClientId, op.SequenceNum) {
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServerApplier replyDuplicatedResponse:[%d,%d]", op.ClientId, op.SequenceNum)
+		return kv.sessions[op.ClientId].Reply
 	} else {
 		reply := kv.applyToStore(op, shardId)
 		if !isGetOp {

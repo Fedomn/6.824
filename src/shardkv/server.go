@@ -36,21 +36,17 @@ type ShardKV struct {
 
 func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdReply) {
 	kv.mu.RLock()
-	if kv.isOutdatedCommand(args.ClientId, args.SequenceNum) {
-		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
-		reply.Status = ErrOutdated
-		kv.mu.RUnlock()
-		return
-	}
-	if isDuplicated, lastReply := kv.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
+	isGetOp := args.OpType == CmdOpGet
+	if !isGetOp && kv.isDuplicated(args.ClientId, args.SequenceNum) {
+		lastReply := kv.sessions[args.ClientId].Reply
 		reply.Status = lastReply.Status
 		reply.Response = lastReply.Response
-		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] duplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] replyDuplicatedResponse:%s", args.ClientId, args.SequenceNum, reply)
 		kv.mu.RUnlock()
 		return
 	}
 	if !kv.canServe(key2shard(args.Key)) {
-		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] canServeKey:%s", args.ClientId, args.SequenceNum, args.Key)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer<-[%d:%d] canNotServeKey:%s", args.ClientId, args.SequenceNum, args.Key)
 		reply.Status = ErrWrongGroup
 		kv.mu.RUnlock()
 		return
@@ -78,7 +74,7 @@ func (kv *ShardKV) StartCmdAndWait(cmd Command, reply *CmdReply) {
 	case res := <-ch:
 		reply.Status = res.Status
 		reply.Response = res.Response
-		kv.DPrintf(kv.gid, kv.me, "ShardKVServer reply <%s:%s>", cmd.CmdType, reply)
+		kv.DPrintf(kv.gid, kv.me, "ShardKVServer reply <%s:%s> for %s", cmd.CmdType, reply, cmd.CmdArgs)
 	case <-time.After(ExecuteTimeout):
 		reply.Status = ErrTimeout
 		reply.LeaderHint = kv.rf.GetLeader()
