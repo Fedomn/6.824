@@ -30,6 +30,7 @@ func (kv *ShardKV) releaseNotifyCh(index int) {
 func (kv *ShardKV) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
+	_ = kv.gLogFile.Close()
 }
 
 func (kv *ShardKV) killed() bool {

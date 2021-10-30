@@ -6,6 +6,7 @@ import (
 	"6.824/raft"
 	"6.824/shardctrler"
 	"log"
+	"os"
 	"sync"
 	"time"
 )
@@ -31,7 +32,8 @@ type ShardKV struct {
 	lastConfig    shardctrler.Config
 	currentConfig shardctrler.Config
 
-	gLog *log.Logger
+	gLog     *log.Logger
+	gLogFile *os.File
 }
 
 func (kv *ShardKV) Command(args *CmdOpArgs, reply *CmdReply) {
@@ -94,7 +96,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(ShardsOpReply{})
 
 	applyCh := make(chan raft.ApplyMsg)
-	glog := initGlog(testNum, gid)
+	glog, glogFile := initGlog(testNum, gid)
 	kv := &ShardKV{
 		me:           me,
 		rf:           raft.StartNode(servers, me, persister, applyCh, glog),
@@ -108,6 +110,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		sc:           shardctrler.MakeClerk(ctrlers),
 		notifyCh:     make(map[int]chan CmdReply),
 		gLog:         glog,
+		gLogFile:     glogFile,
 	}
 	kv.installSnapshot(kv.rfPersister.ReadSnapshot())
 

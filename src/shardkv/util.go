@@ -35,16 +35,16 @@ const Trace = false
 
 const filenamePattern = "test-shardkv-%s-%d.log"
 
-func initGlog(testNum string, gid int) *log.Logger {
+func initGlog(testNum string, gid int) (*log.Logger, *os.File) {
 	if testNum == "0" {
-		return log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+		return log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds), nil
 	} else {
 		filename := fmt.Sprintf(filenamePattern, testNum, gid)
 		fd, err := os.OpenFile(filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 		if err != nil {
 			panic(fmt.Sprintf("init log file err %v", err))
 		}
-		return log.New(fd, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+		return log.New(fd, "", log.Ldate|log.Ltime|log.Lmicroseconds), fd
 	}
 }
 
