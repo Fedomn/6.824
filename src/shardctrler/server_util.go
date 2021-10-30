@@ -5,19 +5,10 @@ import (
 	"sync/atomic"
 )
 
-func (sc *ShardCtrler) isOutdatedCommand(clientId, sequenceNum int64) bool {
-	lastOperation, ok := sc.sessions[clientId]
-	if ok {
-		return lastOperation.SequenceNum > sequenceNum
-	} else {
-		return false
-	}
-}
-
 func (sc *ShardCtrler) getDuplicatedCommandReply(clientId, sequenceNum int64) (bool, CommandReply) {
 	lastOperation, ok := sc.sessions[clientId]
 	if ok {
-		return lastOperation.SequenceNum == sequenceNum, lastOperation.Reply
+		return sequenceNum <= lastOperation.SequenceNum, lastOperation.Reply
 	} else {
 		return false, CommandReply{}
 	}

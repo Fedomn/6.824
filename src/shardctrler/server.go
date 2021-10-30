@@ -49,12 +49,6 @@ type LastOperation struct {
 
 func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
 	sc.mu.RLock()
-	if sc.isOutdatedCommand(args.ClientId, args.SequenceNum) {
-		sc.DPrintf(sc.me, "ShardCtrlerServer<-[%d:%d] outdatedCommand", args.ClientId, args.SequenceNum)
-		reply.Status = ErrOutdated
-		sc.mu.RUnlock()
-		return
-	}
 	if isDuplicated, lastReply := sc.getDuplicatedCommandReply(args.ClientId, args.SequenceNum); isDuplicated {
 		reply.Status = lastReply.Status
 		reply.Config = lastReply.Config
@@ -113,13 +107,6 @@ func (sc *ShardCtrler) applier() {
 
 				op := msg.Command.(Op)
 				reply := CommandReply{}
-
-				if sc.isOutdatedCommand(op.ClientId, op.SequenceNum) {
-					sc.DPrintf(sc.me, "ShardCtrlerServerApplier gotOutdatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
-					reply.Status = ErrOutdated
-					sc.mu.RUnlock()
-					return
-				}
 
 				if isDuplicated, lastReply := sc.getDuplicatedCommandReply(op.ClientId, op.SequenceNum); isDuplicated {
 					sc.DPrintf(sc.me, "ShardCtrlerServerApplier gotDuplicatedCommand:[%d,%d]", op.ClientId, op.SequenceNum)
