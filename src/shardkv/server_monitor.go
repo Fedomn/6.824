@@ -95,18 +95,22 @@ func (kv *ShardKV) monitorGC() {
 		if _, isLeader := kv.rf.GetState(); isLeader {
 			kv.mu.RLock()
 			gid2shardIDs := kv.getShardIDsByStatus(ShardNotifyPeerGidGC)
+			var wg sync.WaitGroup // 减少重复pull RPC的次数
 			currentConfigNum := kv.currentConfig.Num
 			lastConfig := kv.lastConfig
 			kv.mu.RUnlock()
 
 			for gid, shardIDs := range gid2shardIDs {
 				kv.DPrintf(kv.gid, kv.me, "ShardCtrlerMonitorGC StartDeleteShards from gid:%d, shardIDs:%v", gid, shardIDs)
+				wg.Add(1)
 				_gid := gid
 				_shardIDs := shardIDs
 				go func() {
+					defer wg.Done()
 					kv.deleteShardData(lastConfig, currentConfigNum, _gid, _shardIDs)
 				}()
 			}
+			wg.Wait()
 		}
 		time.Sleep(MonitorGCTimeout)
 	}
