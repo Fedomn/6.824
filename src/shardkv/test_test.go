@@ -390,10 +390,6 @@ func TestConcurrent1(t *testing.T) {
 // group might need to fetch shard contents.
 //
 func TestConcurrent2(t *testing.T) {
-	go func() {
-		log.Println(http.ListenAndServe("0.0.0.0:8082", nil))
-	}()
-
 	fmt.Printf("Test: more concurrent puts and configuration changes...\n")
 
 	cfg := make_config(t, 3, false, -1, *testNum)
@@ -961,6 +957,9 @@ func TestChallenge2Partial(t *testing.T) {
 var testNum = flag.String("tn", "0", "test number")
 
 func TestMain(t *testing.M) {
+	go func() {
+		log.Println(http.ListenAndServe("0.0.0.0:8082", nil))
+	}()
 	flag.Parse()
 	os.Exit(t.Run())
 }
