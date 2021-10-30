@@ -69,6 +69,8 @@ func (kv *ShardKV) applier() {
 				panic(fmt.Sprintf("ShardKVServerApplier Unexpected message %v", msg))
 			}
 			kv.mu.Unlock()
+		case <-kv.rf.KillCh():
+			return
 		}
 	}
 }

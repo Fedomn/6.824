@@ -144,6 +144,8 @@ func (sc *ShardCtrler) applier() {
 				panic(fmt.Sprintf("ShardCtrlerServerApplier Unexpected message %v", msg))
 			}
 			sc.mu.Unlock()
+		case <-sc.rf.KillCh():
+			return
 		}
 	}
 }

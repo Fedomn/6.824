@@ -158,6 +158,11 @@ func (rf *Raft) replicator() {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	close(rf.killCh)
+	rf.applyCond.Broadcast()
+}
+
+func (rf *Raft) KillCh() chan struct{} {
+	return rf.killCh
 }
 
 func (rf *Raft) killed() bool {
@@ -178,6 +183,9 @@ func (rf *Raft) asyncApplier() {
 	for !rf.killed() {
 		rf.mu.Lock()
 		for rf.lastApplied >= rf.commitIndex {
+			if rf.killed() {
+				return
+			}
 			rf.applyCond.Wait()
 			// 这里取反，也就是说，只有当rf.lastApplied < rf.commitIndex时，才执行到下一步
 		}
@@ -187,11 +195,15 @@ func (rf *Raft) asyncApplier() {
 		rf.DPrintf(rf.me, "%s will apply %v - %v = delta %v, entries:%v", rf.state, commitIndex, rf.lastApplied, deltaCount, debugLast3Logs(needAppliedEntries))
 		rf.mu.Unlock()
 		for _, entry := range needAppliedEntries {
-			rf.applyCh <- ApplyMsg{
+			select {
+			case rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				Command:      entry.Command,
 				CommandIndex: entry.Index,
 				CommandTerm:  entry.Term,
+			}:
+			case <-rf.killCh:
+				return
 			}
 		}
 		rf.mu.Lock()

@@ -956,10 +956,13 @@ func TestChallenge2Partial(t *testing.T) {
 
 var testNum = flag.String("tn", "0", "test number")
 
-func TestMain(t *testing.M) {
+func TestMain(m *testing.M) {
 	go func() {
 		log.Println(http.ListenAndServe("0.0.0.0:8082", nil))
 	}()
 	flag.Parse()
-	os.Exit(t.Run())
+	res := m.Run()
+	//time.Sleep(time.Second)
+	//goleak.VerifyTestMain(m)
+	os.Exit(res)
 }
