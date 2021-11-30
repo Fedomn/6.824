@@ -3,6 +3,7 @@ package shardkv
 import (
 	"6.824/porcupine"
 	"flag"
+	"go.uber.org/goleak"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -962,7 +963,7 @@ func TestMain(m *testing.M) {
 	}()
 	flag.Parse()
 	res := m.Run()
-	//time.Sleep(time.Second)
-	//goleak.VerifyTestMain(m)
+	time.Sleep(time.Second)
+	goleak.VerifyTestMain(m)
 	os.Exit(res)
 }
